@@ -21,6 +21,9 @@ A lightweight VLESS + Trojan proxy panel built with FastAPI, deployable on [Rend
 - Subscription link (`/sub/<uid>`) compatible with v2rayNG, Hiddify, etc. — automatically lists every enabled protocol/address combination
 - Clean IP / alternative address management, with a one-click **Railway IP** bulk-import button (reads from `railway_ips.txt`)
 - Real-time dashboard: CPU, memory, hourly traffic chart
+- **Persian-first UI (RTL)** — default language is Persian; English is still available from the EN/FA switch
+- **Persian typography:** Vazirmatn (body) + Lalezar (headings), self-hosted in `static/fonts/` (works even when Google Fonts is blocked)
+- Persian numerals, Jalali dates and Persian units across the panel and the subscription page
 - Bilingual UI (English / Persian)
 - Dark & Light mode
 - Session-based authentication with password change
@@ -35,6 +38,7 @@ A lightweight VLESS + Trojan proxy panel built with FastAPI, deployable on [Rend
 .
 ├── main.py               # FastAPI application (gateway + panel UI)
 ├── xhttp_transport.py    # XHTTP transport (packet-up / stream-up) router
+├── static/fonts/         # Self-hosted Persian fonts: Vazirmatn (variable) + Lalezar (+ OFL licenses)
 ├── railway_ips.txt       # Optional: your own list of clean IPs for the Railway IP import button
 ├── requirements.txt      # Python dependencies
 ├── render.yaml            # Render deployment config
@@ -352,6 +356,9 @@ MIT — use freely, modify as needed.
 - لینک اشتراک (`/sub/<uid>`) سازگار با v2rayNG، Hiddify و غیره — به‌صورت خودکار برای هر ترکیب پروتکل/آدرس فعال، یک کانفیگ جدا می‌سازه
 - مدیریت آی‌پی تمیز / آدرس‌های جایگزین، با دکمه‌ی **Railway IP** برای ایمپورت یکجا (از فایل `railway_ips.txt`)
 - داشبورد لحظه‌ای: CPU، حافظه، نمودار ترافیک ساعتی
+- **رابط فارسی و راست‌به‌چپ (RTL)** — زبان پیش‌فرض فارسی است؛ انگلیسی هم با دکمه‌ی EN/FA در دسترس است
+- **تایپوگرافی فارسی:** وزیرمتن (متن) و لاله‌زار (تیترها)، به‌صورت لوکال در `static/fonts/` (حتی اگه گوگل‌فونتز فیلتر باشه کار می‌کنه)
+- ارقام فارسی، تاریخ شمسی و واحدهای فارسی در همه‌جای پنل و صفحه‌ی اشتراک
 - رابط کاربری دو زبانه (فارسی / انگلیسی)
 - حالت تاریک و روشن
 - احراز هویت مبتنی بر session با امکان تغییر رمز
@@ -366,6 +373,7 @@ MIT — use freely, modify as needed.
 .
 ├── main.py               # اپلیکیشن FastAPI (گیت‌وی + رابط پنل)
 ├── xhttp_transport.py    # روتر ترابرد XHTTP (packet-up / stream-up)
+├── static/fonts/         # فونت‌های فارسیِ لوکال: وزیرمتن (variable) و لاله‌زار (+ لایسنس OFL)
 ├── railway_ips.txt       # اختیاری: لیست آی‌پی‌های تمیز خودت برای دکمه‌ی Railway IP
 ├── requirements.txt      # وابستگی‌های پایتون
 ├── render.yaml            # تنظیمات استقرار Render

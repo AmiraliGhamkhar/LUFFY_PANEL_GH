@@ -1,0 +1,13 @@
+# پایتون
+__pycache__/
+*.py[cod]
+
+# فایل‌های زمان اجرا (دیتابیس و کلید نشست — هرگز کامیت نشوند)
+panel.db
+panel.db-journal
+secret.key
+/data/
+
+# ابزارهای محلی
+.preview/
+.DS_Store

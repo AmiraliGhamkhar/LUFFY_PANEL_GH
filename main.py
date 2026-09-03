@@ -115,8 +115,8 @@ async def check_github_latest(force: bool = False) -> dict:
     if new_tag and new_tag != cached_tag and cached_tag:
         await create_notification(
             type="update",
-            title=f"New version: {new_tag}",
-            message=f"Panel version {cached_tag} → {new_tag} is available on GitHub.",
+            title=L("notif_version_title", tag=vnum(new_tag)),
+            message=L("notif_version_msg", old=vnum(cached_tag), new=vnum(new_tag)),
             link=new_url,
         )
 
@@ -204,13 +204,16 @@ CONFIG = {
     "secret": _get_or_create_secret(),
     "telegram_token": "",
     "telegram_admin_id": "",
-    "bot_lang": "en",
+    # پیش‌فرض ربات و اعلان‌ها فارسی است (در صورت نیاز از تنظیمات پنل قابل تغییر است)
+    "bot_lang": "fa",
     "railway_token": "",
     "notify_connections": "0",
 }
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.mount("/client", StaticFiles(directory="client"), name="client")
+# فونت‌های فارسی (وزیرمتن و لاله‌زار) به‌صورت لوکال سرو می‌شوند
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 connections: dict = {}
 connections_lock = asyncio.Lock()
@@ -376,8 +379,8 @@ BOT_I18N = {
         "stats": (
             "<b>📊 Server Status Dashboard</b>\n\n"
             "🌐 <b>Domain:</b> <code>{domain}</code>\n"
-            "🔋 <b>CPU:</b> <code>{cpu:.1f}%</code>\n"
-            "💾 <b>Memory:</b> <code>{mem:.1f}%</code>\n"
+            "🔋 <b>CPU:</b> <code>{cpu}</code>\n"
+            "💾 <b>Memory:</b> <code>{mem}</code>\n"
             "⏱ <b>Uptime:</b> <code>{uptime}</code>\n"
             "👥 <b>Active Connections:</b> <code>{active}</code>\n"
             "📈 <b>Total Traffic:</b> <code>{traffic} MB</code>\n"
@@ -446,6 +449,13 @@ BOT_I18N = {
             "User: <code>{label}</code> has expired.\n"
             "Expiry date: <code>{exp}</code>"
         ),
+        # متن اعلان‌های داخل پنل (Notification Center)
+        "notif_version_title": "New version: {tag}",
+        "notif_version_msg": "Panel version {old} → {new} is available on GitHub.",
+        "notif_quota_title": "Quota exceeded: {label}",
+        "notif_quota_msg": "{label} used {used} of {limit}",
+        "notif_expiry_title": "Expired: {label}",
+        "notif_expiry_msg": "{label} has expired on {exp}",
     },
     "fa": {
         "btn_stats": "📊 آمار",
@@ -459,11 +469,11 @@ BOT_I18N = {
         "stats": (
             "<b>📊 وضعیت سرور</b>\n\n"
             "🌐 <b>دامنه:</b> <code>{domain}</code>\n"
-            "🔋 <b>پردازنده:</b> <code>{cpu:.1f}%</code>\n"
-            "💾 <b>رم:</b> <code>{mem:.1f}%</code>\n"
+            "🔋 <b>پردازنده:</b> <code>{cpu}</code>\n"
+            "💾 <b>رم:</b> <code>{mem}</code>\n"
             "⏱ <b>آپ‌تایم:</b> <code>{uptime}</code>\n"
             "👥 <b>اتصالات فعال:</b> <code>{active}</code>\n"
-            "📈 <b>ترافیک کل:</b> <code>{traffic} MB</code>\n"
+            "📈 <b>ترافیک کل:</b> <code>{traffic} مگابایت</code>\n"
             "🔑 <b>تعداد کاربران:</b> <code>{links}</code>"
         ),
         "users_title": "<b>👥 لیست کاربران و میزان مصرف:</b>\n",
@@ -529,11 +539,86 @@ BOT_I18N = {
             "کاربر: <code>{label}</code> منقضی شد.\n"
             "تاریخ انقضا: <code>{exp}</code>"
         ),
+        # متن اعلان‌های داخل پنل (Notification Center)
+        "notif_version_title": "نسخه جدید: {tag}",
+        "notif_version_msg": "نسخه {old} → {new} پنل روی گیت‌هاب منتشر شده است.",
+        "notif_quota_title": "اتمام حجم: {label}",
+        "notif_quota_msg": "{label} از {limit}، {used} مصرف کرده است",
+        "notif_expiry_title": "منقضی شده: {label}",
+        "notif_expiry_msg": "اعتبار {label} در تاریخ {exp} به پایان رسید",
     },
 }
 
 def bot_lang() -> str:
     return CONFIG.get("bot_lang") if CONFIG.get("bot_lang") in ("en", "fa") else "en"
+
+def ui_lang(request=None) -> str:
+    """زبان رابط کاربر برای پاسخ‌های API.
+
+    اولویت: کوکی lang که پنل ست می‌کند ← هدر Accept-Language مرورگر ←
+    زبان پیش‌فرض ربات (که پیش‌فرضش فارسی است)."""
+    lang = None
+    if request is not None:
+        try:
+            lang = request.cookies.get("lang")
+        except Exception:
+            lang = None
+        if lang not in ("en", "fa"):
+            accept = ""
+            try:
+                accept = (request.headers.get("accept-language") or "").lower()
+            except Exception:
+                accept = ""
+            # فقط وقتی مرورگر صریحاً انگلیسی خواسته باشد انگلیسی برمی‌گردانیم؛
+            # در غیر این صورت (از جمله بی‌توجهی به زبان) فارسی پیش‌فرض است.
+            if accept.startswith("fa"):
+                lang = "fa"
+            elif accept.startswith("en"):
+                lang = "en"
+            else:
+                lang = None
+    if lang in ("en", "fa"):
+        return lang
+    return bot_lang()
+
+
+# پیام‌های خطای API به دو زبان (پیش‌فرض فارسی)
+API_MSG = {
+    "invalid_password":        {"en": "Invalid password", "fa": "رمز عبور اشتباه است"},
+    "bad_current_password":    {"en": "Current password is incorrect", "fa": "رمز عبور فعلی اشتباه است"},
+    "short_password":          {"en": "Password must be at least 4 characters", "fa": "رمز عبور باید حداقل ۴ کاراکتر باشد"},
+    "railway_token_required":  {"en": "Railway token is required", "fa": "وارد کردن توکن Railway الزامی است"},
+    "no_services":             {"en": "No services found in this project.", "fa": "هیچ سرویسی در این پروژه پیدا نشد."},
+    "multi_services":          {
+        "en": "Multiple services found in this project and the panel's own service couldn't be identified automatically. Make sure you're running this panel as a Railway service inside the selected project.",
+        "fa": "در این پروژه چند سرویس وجود دارد و سرویس مربوط به همین پنل به‌طور خودکار تشخیص داده نشد. مطمئن شوید این پنل به‌عنوان یک سرویس Railway داخل همین پروژه در حال اجراست.",
+    },
+    "token_project_required":  {"en": "Token and project_id are required", "fa": "توکن و شناسه پروژه الزامی هستند"},
+    "create_volume_failed":    {"en": "Failed to create volume", "fa": "ایجاد volume ناموفق بود"},
+    "bad_inbound_name":        {"en": "Inbound name must contain only English letters, numbers, and characters: - _ . space", "fa": "نام اینباند فقط می‌تواند شامل حروف انگلیسی، اعداد و این نویسه‌ها باشد: - _ . فاصله"},
+    "inbound_name_required":   {"en": "Inbound name is required", "fa": "وارد کردن نام اینباند الزامی است"},
+    "inbound_exists":          {"en": "An inbound with this name already exists", "fa": "اینباندی با این نام از قبل وجود دارد"},
+    "link_not_found":          {"en": "link not found", "fa": "اینباند پیدا نشد"},
+    "address_required":        {"en": "Address is required", "fa": "وارد کردن آدرس الزامی است"},
+    "bad_address":             {"en": "Address must contain only English letters, numbers, and characters: - _ .", "fa": "آدرس فقط می‌تواند شامل حروف انگلیسی، اعداد و این نویسه‌ها باشد: - _ ."},
+    "address_exists":          {"en": "Address already exists", "fa": "این آدرس از قبل وجود دارد"},
+    "address_not_found":       {"en": "Address not found", "fa": "آدرس پیدا نشد"},
+    "unknown_import_source":   {"en": "unknown import source", "fa": "منبع ایمپورت نامعتبر است"},
+    "sub_link_not_found":      {"en": "link not found", "fa": "لینک یافت نشد"},
+    "sub_link_disabled":       {"en": "link disabled", "fa": "این لینک غیرفعال است"},
+    "sub_link_expired":        {"en": "link expired", "fa": "اعتبار این لینک به پایان رسیده است"},
+}
+
+
+def M(request, key: str, **kwargs) -> str:
+    """برمی‌گرداند پیام دوزبانه‌ی API را با توجه به زبان درخواست."""
+    table = API_MSG.get(key) or {}
+    template = table.get(ui_lang(request)) or table.get("fa") or table.get("en") or key
+    try:
+        return template.format(**kwargs) if kwargs else template
+    except Exception:
+        return template
+
 
 def L(key: str, **kwargs) -> str:
     lang = bot_lang()
@@ -1265,15 +1350,15 @@ def fmt_exp_py(ea: str | None) -> str:
     diff = exp - datetime.now(timezone.utc)
     seconds = diff.total_seconds()
     if seconds <= 0:
-        return "Expired"
+        return "منقضی شده" if bot_lang() == "fa" else "Expired"
     days = int(seconds // 86400)
     if days > 0:
-        return f"{days}d"
+        return f"{fa_num(days)} روز" if bot_lang() == "fa" else f"{days}d"
     hours = int(seconds // 3600)
     if hours > 0:
-        return f"{hours}h"
+        return f"{fa_num(hours)} ساعت" if bot_lang() == "fa" else f"{hours}h"
     minutes = int(seconds // 60)
-    return f"{minutes}m"
+    return f"{fa_num(minutes)} دقیقه" if bot_lang() == "fa" else f"{minutes}m"
 
 async def get_internal_stats():
     async with connections_lock:
@@ -1290,16 +1375,58 @@ async def get_internal_stats():
         "memory_percent": psutil.virtual_memory().percent,
     }
 
+def vnum(v) -> str:
+    """شماره‌ی نسخه با ارقام و ممیز فارسی (۱٫۲٫۰) — در زبان انگلیسی بدون تغییر."""
+    return fa_num(v).replace(".", "٫") if bot_lang() == "fa" else str(v)
+
+
+def exp_disp(raw: str | None) -> str:
+    """تاریخ انقضا برای نمایش: در فارسی شمسی با ارقام فارسی، در انگلیسی همان رشته‌ی اصلی."""
+    if bot_lang() != "fa":
+        return raw or "-"
+    dt = parse_expires_at(raw)
+    return fa_date(dt) if dt else (raw or "-")
+
+
+def fa_dec(value, nd: int = 1) -> str:
+    """عدد اعشاری با ارقام، ممیز و جداکننده‌ی هزارگان فارسی: ۱٬۲۳۴٫۵۶"""
+    try:
+        return fa_num(f"{float(value):,.{nd}f}").replace(",", "٬").replace(".", "٫")
+    except Exception:
+        return fa_num(value)
+
+
+def _num(v, suffix: str = "") -> str:
+    """عدد را متناسب با زبان ربات با ارقام فارسی یا لاتین برمی‌گرداند."""
+    return f"{fa_num(v)}{suffix}" if bot_lang() == "fa" else f"{v}{suffix}"
+
+
 def make_stats_text(s_data) -> str:
+    cpu_v = s_data.get("cpu_percent", 0)
+    mem_v = s_data.get("memory_percent", 0)
+    uptime_v = s_data.get("uptime", "-")
+    active_v = s_data.get("active_connections", 0)
+    traffic_v = s_data.get("total_traffic_mb", 0)
+    links_v = s_data.get("links_count", 0)
+
+    if bot_lang() == "fa":
+        cpu, mem = fa_dec(cpu_v, 1) + "٪", fa_dec(mem_v, 1) + "٪"
+        uptime, active = fa_num(uptime_v), fa_num(active_v)
+        traffic, links = fa_dec(traffic_v, 2), fa_num(links_v)
+    else:
+        cpu, mem = f"{cpu_v:.1f}%", f"{mem_v:.1f}%"
+        uptime, active = str(uptime_v), str(active_v)
+        traffic, links = f"{traffic_v}", str(links_v)
+
     return L(
         "stats",
         domain=s_data.get("domain", "-"),
-        cpu=s_data.get("cpu_percent", 0),
-        mem=s_data.get("memory_percent", 0),
-        uptime=s_data.get("uptime", "-"),
-        active=s_data.get("active_connections", 0),
-        traffic=s_data.get("total_traffic_mb", 0),
-        links=s_data.get("links_count", 0),
+        cpu=cpu,
+        mem=mem,
+        uptime=uptime,
+        active=active,
+        traffic=traffic,
+        links=links,
     )
 
 async def make_users_text() -> str:
@@ -1311,8 +1438,8 @@ async def make_users_text() -> str:
         return L("no_inbounds")
 
     for uid, data in items:
-        used = _fmt_bytes(data["used_bytes"])
-        limit = _fmt_bytes(data["limit_bytes"]) if data["limit_bytes"] > 0 else "∞"
+        used = bfmt(data["used_bytes"])
+        limit = bfmt(data["limit_bytes"]) if data["limit_bytes"] > 0 else "∞"
         ex = fmt_exp_py(data.get("expires_at"))
         status = L("status_on") if data["active"] else L("status_off")
         lines.append(L("users_line", label=data['label'], used=used, limit=limit, exp=ex, status=status))
@@ -1328,9 +1455,9 @@ async def make_top_users_text() -> str:
 
     sorted_items = sorted(items, key=lambda x: x[1].get("used_bytes", 0), reverse=True)[:5]
     for i, (uid, data) in enumerate(sorted_items, 1):
-        used = _fmt_bytes(data["used_bytes"])
-        limit = _fmt_bytes(data["limit_bytes"]) if data["limit_bytes"] > 0 else "∞"
-        lines.append(L("top_line", i=i, label=data['label'], used=used, limit=limit))
+        used = bfmt(data["used_bytes"])
+        limit = bfmt(data["limit_bytes"]) if data["limit_bytes"] > 0 else "∞"
+        lines.append(L("top_line", i=_num(i), label=data['label'], used=used, limit=limit))
     return "\n".join(lines)
 
 async def handle_create_command(text: str):
@@ -1383,8 +1510,8 @@ async def handle_create_command(text: str):
     vless_link = "\n".join(links_for_all_variants(LINKS[uid], uid))
     sub_url = f"https://{get_domain()}/sub/{uid}"
 
-    quota_str = _fmt_bytes(limit_bytes) if limit_bytes > 0 else L("unlimited")
-    expiry_str = L("days_fmt", days=days_valid) if days_valid > 0 else L("unlimited")
+    quota_str = bfmt(limit_bytes) if limit_bytes > 0 else L("unlimited")
+    expiry_str = L("days_fmt", days=_num(days_valid)) if days_valid > 0 else L("unlimited")
 
     return L(
         "create_success",
@@ -1458,13 +1585,13 @@ async def telegram_notifier_cron():
                 if limit > 0 and used >= limit:
                     notif_key = f"quota_{uid}"
                     if notif_key not in notified_uids:
-                        msg = L("quota_alert", label=label, used=_fmt_bytes(used), limit=_fmt_bytes(limit))
+                        msg = L("quota_alert", label=label, used=bfmt(used), limit=bfmt(limit))
                         await send_tg_message(msg)
                         notified_uids.add(notif_key)
                         await create_notification(
                             type="quota",
-                            title=f"Quota exceeded: {label}",
-                            message=f"{label} used {_fmt_bytes(used)} of {_fmt_bytes(limit)}",
+                            title=L("notif_quota_title", label=label),
+                            message=L("notif_quota_msg", label=label, used=bfmt(used), limit=bfmt(limit)),
                         )
                 
                 expires_at_str = data.get("expires_at")
@@ -1473,13 +1600,13 @@ async def telegram_notifier_cron():
                     if exp and exp < datetime.now(timezone.utc):
                         notif_key = f"expiry_{uid}"
                         if notif_key not in notified_uids:
-                            msg = L("expiry_alert", label=label, exp=expires_at_str)
+                            msg = L("expiry_alert", label=label, exp=exp_disp(expires_at_str))
                             await send_tg_message(msg)
                             notified_uids.add(notif_key)
                             await create_notification(
                                 type="expiry",
-                                title=f"Expired: {label}",
-                                message=f"{label} has expired on {expires_at_str}",
+                                title=L("notif_expiry_title", label=label),
+                                message=L("notif_expiry_msg", label=label, exp=exp_disp(expires_at_str)),
                             )
                             
         except Exception as e:
@@ -1524,7 +1651,7 @@ async def api_login(request: Request):
     ip = get_request_ip(request)
     if hash_password(password) != AUTH["password_hash"]:
         await send_tg_message(f"⚠️ <b>تلاش ناموفق برای ورود به پنل</b>\nIP: <code>{html.escape(ip)}</code>")
-        raise HTTPException(status_code=401, detail="Invalid password")
+        raise HTTPException(status_code=401, detail=M(request, "invalid_password"))
     token = await create_session()
     resp = JSONResponse({"ok": True})
     resp.set_cookie(key=SESSION_COOKIE, value=token, max_age=SESSION_TTL, httponly=True, samesite="lax", path="/")
@@ -1564,9 +1691,9 @@ async def api_change_password(request: Request, _=Depends(require_auth)):
     current = str(body.get("current_password") or "")
     new = str(body.get("new_password") or "")
     if hash_password(current) != AUTH["password_hash"]:
-        raise HTTPException(status_code=400, detail="Current password is incorrect")
+        raise HTTPException(status_code=400, detail=M(request, "bad_current_password"))
     if len(new) < 4:
-        raise HTTPException(status_code=400, detail="Password must be at least 4 characters")
+        raise HTTPException(status_code=400, detail=M(request, "short_password"))
     AUTH["password_hash"] = hash_password(new)
     await save_db()
     current_token = request.cookies.get(SESSION_COOKIE)
@@ -1633,7 +1760,7 @@ async def railway_list_projects(request: Request, _=Depends(require_auth)):
     body = await request.json()
     token = body.get("token", "").strip()
     if not token:
-        raise HTTPException(status_code=400, detail="Railway token is required")
+        raise HTTPException(status_code=400, detail=M(request, "railway_token_required"))
 
     projects = []
     seen_ids = set()
@@ -1708,7 +1835,7 @@ async def _railway_resolve_service(token: str, project_id: str) -> dict:
     """, {"id": project_id})
     services = [e["node"] for e in ((data.get("project") or {}).get("services") or {}).get("edges", [])]
     if not services:
-        raise HTTPException(status_code=400, detail="No services found in this project.")
+        raise HTTPException(status_code=400, detail=M(request, "no_services"))
     own_service_id = os.environ.get("RAILWAY_SERVICE_ID", "").strip()
     if own_service_id:
         match = next((s for s in services if s["id"] == own_service_id), None)
@@ -1718,7 +1845,7 @@ async def _railway_resolve_service(token: str, project_id: str) -> dict:
         return services[0]
     raise HTTPException(
         status_code=400,
-        detail="Multiple services found in this project and the panel's own service couldn't be identified automatically. Make sure you're running this panel as a Railway service inside the selected project.",
+        detail=M(request, "multi_services"),
     )
 
 @app.post("/api/railway/volume-status")
@@ -1727,7 +1854,7 @@ async def railway_volume_status(request: Request, _=Depends(require_auth)):
     token = body.get("token", "").strip()
     project_id = body.get("project_id", "").strip()
     if not token or not project_id:
-        raise HTTPException(status_code=400, detail="Token and project_id are required")
+        raise HTTPException(status_code=400, detail=M(request, "token_project_required"))
     service = await _railway_resolve_service(token, project_id)
     data = await _railway_graphql(token, """
         query ($id: String!) {
@@ -1767,7 +1894,7 @@ async def railway_create_volume(request: Request, _=Depends(require_auth)):
     token = body.get("token", "").strip()
     project_id = body.get("project_id", "").strip()
     if not token or not project_id:
-        raise HTTPException(status_code=400, detail="Token and project_id are required")
+        raise HTTPException(status_code=400, detail=M(request, "token_project_required"))
     service = await _railway_resolve_service(token, project_id)
     volume_input = {"projectId": project_id, "serviceId": service["id"], "mountPath": "/data"}
     env_id = os.environ.get("RAILWAY_ENVIRONMENT_ID", "").strip()
@@ -1780,7 +1907,7 @@ async def railway_create_volume(request: Request, _=Depends(require_auth)):
     """, {"input": volume_input})
     vol = data.get("volumeCreate") or {}
     if not vol.get("id"):
-        raise HTTPException(status_code=502, detail="Failed to create volume")
+        raise HTTPException(status_code=502, detail=M(request, "create_volume_failed"))
     return {
         "id": vol["id"],
         "name": vol.get("name", ""),
@@ -1812,12 +1939,12 @@ async def create_link(request: Request, _=Depends(require_auth)):
     body = await request.json()
     label = (body.get("label") or "New Link").strip()[:60]
     if not re.match(r'^[a-zA-Z0-9\-_. ]+$', label):
-        raise HTTPException(status_code=400, detail="Inbound name must contain only English letters, numbers, and characters: - _ . space")
+        raise HTTPException(status_code=400, detail=M(request, "bad_inbound_name"))
     if not label:
-        raise HTTPException(status_code=400, detail="Inbound name is required")
+        raise HTTPException(status_code=400, detail=M(request, "inbound_name_required"))
     async with LINKS_LOCK:
         if any(v["label"] == label for v in LINKS.values()):
-            raise HTTPException(status_code=400, detail="An inbound with this name already exists")
+            raise HTTPException(status_code=400, detail=M(request, "inbound_exists"))
     limit_value = float(body.get("limit_value") or 0)
     limit_unit = body.get("limit_unit") or "GB"
     limit_bytes = 0 if limit_value <= 0 else parse_size_to_bytes(limit_value, limit_unit)
@@ -1888,7 +2015,7 @@ async def toggle_link(uid: str, request: Request, _=Depends(require_auth)):
     body = await request.json()
     async with LINKS_LOCK:
         if uid not in LINKS:
-            raise HTTPException(status_code=404, detail="link not found")
+            raise HTTPException(status_code=404, detail=M(request, "link_not_found"))
         if "active" in body:
             LINKS[uid]["active"] = bool(body["active"])
         if "limit_value" in body:
@@ -1941,12 +2068,12 @@ async def add_address(request: Request, _=Depends(require_auth)):
     body = await request.json()
     address = (body.get("address") or "").strip()
     if not address:
-        raise HTTPException(status_code=400, detail="Address is required")
+        raise HTTPException(status_code=400, detail=M(request, "address_required"))
     if not re.match(r'^[a-zA-Z0-9\-_. ]+$', address):
-        raise HTTPException(status_code=400, detail="Address must contain only English letters, numbers, and characters: - _ .")
+        raise HTTPException(status_code=400, detail=M(request, "bad_address"))
     async with CUSTOM_ADDRESSES_LOCK:
         if address in CUSTOM_ADDRESSES:
-            raise HTTPException(status_code=400, detail="Address already exists")
+            raise HTTPException(status_code=400, detail=M(request, "address_exists"))
         CUSTOM_ADDRESSES.append(address)
     await save_db()
     return {"ok": True, "addresses": list(CUSTOM_ADDRESSES)}
@@ -1964,7 +2091,7 @@ async def delete_address(index: int, _=Depends(require_auth)):
         if 0 <= index < len(CUSTOM_ADDRESSES):
             CUSTOM_ADDRESSES.pop(index)
         else:
-            raise HTTPException(status_code=404, detail="Address not found")
+            raise HTTPException(status_code=404, detail=M(request, "address_not_found"))
     await save_db()
     return {"ok": True, "addresses": list(CUSTOM_ADDRESSES)}
 
@@ -1993,7 +2120,7 @@ async def import_addresses(source: str, _=Depends(require_auth)):
     برای هرکدوم جدا) به لیست Clean IP اضافه می‌کنه."""
     filename = IP_IMPORT_FILES.get(source)
     if not filename:
-        raise HTTPException(status_code=404, detail="unknown import source")
+        raise HTTPException(status_code=404, detail=M(request, "unknown_import_source"))
     file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
     ips = _parse_ip_file(file_path)
     if not ips:
@@ -2078,27 +2205,95 @@ def _fmt_bytes(b: int) -> str:
     if b >= 1_048_576: return f"{b / 1_048_576:.1f}MB"
     return f"{b / 1024:.1f}KB"
 
+
+# ── ابزارهای نمایش فارسی (ارقام فارسی، واحدهای فارسی، تاریخ شمسی) ───────────
+PERSIAN_DIGITS = "۰۱۲۳۴۵۶۷۸۹"
+JALALI_MONTHS = [
+    "فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
+    "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند",
+]
+
+
+def fa_num(value) -> str:
+    """اعداد را با ارقام فارسی برمی‌گرداند (مقادیر فنی مثل UUID دست‌نخورده می‌مانند)."""
+    return "".join(PERSIAN_DIGITS[int(ch)] if ch.isdigit() else ch for ch in str(value))
+
+
+def bfmt(b: int) -> str:
+    """فرمت حجم متناسب با زبان فعلی ربات (فارسی: ارقام و واحد فارسی)."""
+    return fmt_bytes_fa(b) if bot_lang() == "fa" else _fmt_bytes(b)
+
+
+def fmt_bytes_fa(b: int) -> str:
+    """حجم را با ارقام و واحد فارسی نشان می‌دهد: ۱۲٫۳ مگابایت"""
+    b = b or 0
+    if b >= 1_073_741_824:
+        return f"{fa_num(f'{b / 1_073_741_824:.1f}').replace('.', '٫')} گیگابایت"
+    if b >= 1_048_576:
+        return f"{fa_num(f'{b / 1_048_576:.1f}').replace('.', '٫')} مگابایت"
+    if b >= 1024:
+        return f"{fa_num(f'{b / 1024:.1f}').replace('.', '٫')} کیلوبایت"
+    return f"{fa_num(b)} بایت"
+
+
+def gregorian_to_jalali(gy: int, gm: int, gd: int) -> tuple[int, int, int]:
+    """تبدیل تاریخ میلادی به شمسی (الگوریتم استاندارد، بدون وابستگی خارجی)."""
+    g_days_in_month = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+    gy2 = gy + 1 if gm > 2 else gy
+    days = (
+        355666
+        + (365 * gy)
+        + ((gy2 + 3) // 4)
+        - ((gy2 + 99) // 100)
+        + ((gy2 + 399) // 400)
+        + gd
+        + g_days_in_month[gm - 1]
+    )
+    jy = -1595 + (33 * (days // 12053))
+    days %= 12053
+    jy += 4 * (days // 1461)
+    days %= 1461
+    if days > 365:
+        jy += (days - 1) // 365
+        days = (days - 1) % 365
+    if days < 186:
+        jm = 1 + (days // 31)
+        jd = 1 + (days % 31)
+    else:
+        jm = 7 + ((days - 186) // 30)
+        jd = 1 + ((days - 186) % 30)
+    return jy, jm, jd
+
+
+def fa_date(dt) -> str:
+    """تاریخ را به صورت شمسی و با ارقام فارسی برمی‌گرداند: ۲۴ مرداد ۱۴۰۴"""
+    try:
+        jy, jm, jd = gregorian_to_jalali(dt.year, dt.month, dt.day)
+        return f"{fa_num(jd)} {JALALI_MONTHS[jm - 1]} {fa_num(jy)}"
+    except Exception:
+        return dt.strftime("%d %b %Y")
+
 def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
     used = link["used_bytes"]
     limit = link["limit_bytes"]
     expires_at_str = link.get("expires_at")
 
-    usage_str = f"{_fmt_bytes(used)} / Unlimited" if limit == 0 else f"{_fmt_bytes(used)} / {_fmt_bytes(limit)}"
+    usage_str = f"{fmt_bytes_fa(used)} / نامحدود" if limit == 0 else f"{fmt_bytes_fa(used)} / {fmt_bytes_fa(limit)}"
     pct = round((used / limit) * 100, 1) if limit > 0 else 0
     rem = limit - used if limit > 0 else -1
-    rem_str = _fmt_bytes(rem) if rem >= 0 else "Unlimited"
+    rem_str = fmt_bytes_fa(rem) if rem >= 0 else "نامحدود"
 
     secs_left = seconds_until_expiry(expires_at_str)
     if secs_left is None:
-        expiry_str = "Unlimited"
+        expiry_str = "نامحدود"
         expiry_days = None
     elif secs_left == 0:
-        expiry_str = "Expired"
+        expiry_str = "منقضی شده"
         expiry_days = 0
     else:
         days = secs_left // 86400
         hours = (secs_left % 86400) // 3600
-        expiry_str = f"{days}d {hours}h"
+        expiry_str = f"{fa_num(days)} روز و {fa_num(hours)} ساعت"
         expiry_days = days
 
     # Parse expiry date string for display
@@ -2106,7 +2301,7 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
     if expires_at_str:
         exp_dt = parse_expires_at(expires_at_str)
         if exp_dt:
-            expiry_date_str = exp_dt.strftime("%d %b %Y").upper()
+            expiry_date_str = fa_date(exp_dt)
 
     configs = links_for_all_variants(link, uid)
     for addr in addresses:
@@ -2117,7 +2312,7 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
     configs_json = json.dumps(configs)
 
     is_active = link["active"]
-    status_text = "Active" if is_active else "Inactive"
+    status_text = "فعال" if is_active else "غیرفعال"
     
     # Color based on usage percentage
     if pct >= 90:
@@ -2131,13 +2326,26 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
         ring_color2 = "#FFC200"
 
     html = f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="fa" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Luffy - {link['label']}</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <title>لافی - {link['label']}</title>
+    <link rel="preload" href="/static/fonts/Vazirmatn-VF.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/static/fonts/Lalezar-Regular.woff2" as="font" type="font/woff2" crossorigin>
     <style>
+        /* فونت‌های فارسی به‌صورت لوکال سرو می‌شوند */
+        @font-face{{
+          font-family:'Vazirmatn';
+          src:url('/static/fonts/Vazirmatn-VF.woff2') format('woff2-variations'),
+              url('/static/fonts/Vazirmatn-VF.woff2') format('woff2');
+          font-weight:100 900;font-style:normal;font-display:swap;
+        }}
+        @font-face{{
+          font-family:'Lalezar';
+          src:url('/static/fonts/Lalezar-Regular.woff2') format('woff2');
+          font-weight:400;font-style:normal;font-display:swap;
+        }}
         *{{margin:0;padding:0;box-sizing:border-box}}
         :root{{
             --gold:#FFD700;--gold2:#FFC200;--gold3:#C8900A;
@@ -2148,7 +2356,7 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
             --text:rgba(255,255,255,0.92);--text2:rgba(255,215,0,0.7);--text3:rgba(255,255,255,0.4);
             --green:#4ade80;--red:#f87171;--yellow:#fbbf24;
         }}
-        html,body{{height:100%;background:var(--bg);font-family:'Inter',sans-serif;color:var(--text)}}
+        html,body{{height:100%;background:var(--bg);font-family:'Vazirmatn','Tahoma',system-ui,sans-serif;color:var(--text)}}
         body{{padding:0;display:flex;flex-direction:column;align-items:center;min-height:100vh;overflow-x:hidden}}
 
         /* Animated background */
@@ -2198,10 +2406,10 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
         /* Header */
         .header{{text-align:center;padding:24px 0 20px}}
         .header-logo{{display:inline-flex;align-items:center;gap:10px;margin-bottom:8px}}
-        .header-title{{font-size:22px;font-weight:900;letter-spacing:3px;
+        .header-title{{font-family:'Lalezar','Vazirmatn',serif;font-size:30px;font-weight:400;line-height:1.7;
             background:linear-gradient(135deg,#fff,var(--gold));
             -webkit-background-clip:text;-webkit-text-fill-color:transparent}}
-        .header-sub{{font-size:11px;color:var(--text3);letter-spacing:2px;text-transform:uppercase}}
+        .header-sub{{font-size:12px;color:var(--text3);letter-spacing:0}}
 
         /* Usage ring card */
         .ring-card{{background:var(--surface2);border:1px solid var(--border);border-radius:20px;
@@ -2217,7 +2425,7 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
         .ring-center{{position:absolute;inset:0;display:flex;flex-direction:column;
             align-items:center;justify-content:center}}
         .ring-pct{{font-size:32px;font-weight:900;color:#fff;letter-spacing:-1px}}
-        .ring-label{{font-size:9px;font-weight:700;color:var(--text3);letter-spacing:2px;text-transform:uppercase;margin-top:2px}}
+        .ring-label{{font-size:11px;font-weight:700;color:var(--text3);letter-spacing:0;margin-top:2px}}
 
         .usage-nums{{font-size:20px;font-weight:700;margin-bottom:4px}}
         .usage-nums span{{color:var(--text3);font-size:14px;font-weight:400}}
@@ -2225,8 +2433,8 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
 
         .info-row{{display:flex;gap:12px;margin-top:18px}}
         .info-box{{flex:1;background:rgba(255,215,0,0.05);border:1px solid rgba(255,215,0,0.1);
-            border-radius:10px;padding:10px 12px;text-align:left}}
-        .info-box-label{{font-size:9px;font-weight:700;color:var(--text3);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px}}
+            border-radius:10px;padding:10px 12px;text-align:start}}
+        .info-box-label{{font-size:11px;font-weight:700;color:var(--text3);letter-spacing:0;margin-bottom:4px}}
         .info-box-val{{font-size:13px;font-weight:700}}
         .info-box-val.green{{color:var(--green)}}
         .info-box-val.red{{color:var(--red)}}
@@ -2240,8 +2448,8 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
         .qr-wrap{{background:#fff;border-radius:12px;padding:12px;display:inline-block;
             box-shadow:0 0 24px rgba(255,215,0,0.2);margin-bottom:14px}}
         .qr-wrap img{{width:180px;height:180px;display:block;border-radius:4px}}
-        .qr-label{{font-size:9px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;margin-bottom:4px}}
-        .sub-link-display{{font-size:11px;color:var(--gold);font-weight:600;
+        .qr-label{{font-size:11px;letter-spacing:0;color:var(--text3);margin-bottom:4px}}
+        .sub-link-display{{font-size:11.5px;color:var(--gold);font-weight:600;direction:ltr;text-align:left;
             background:var(--gold-dim);border:1px solid var(--border);border-radius:8px;
             padding:8px 12px;word-break:break-all;cursor:pointer;transition:all .2s}}
         .sub-link-display:hover{{background:rgba(255,215,0,0.15);border-color:var(--border2)}}
@@ -2253,8 +2461,8 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
         .copy-sub-btn:hover{{filter:brightness(1.1);box-shadow:0 0 30px rgba(255,215,0,0.4)}}
 
         /* Platform chips */
-        .section-label{{font-size:9px;font-weight:800;letter-spacing:2px;color:var(--text3);
-            text-transform:uppercase;margin:20px 0 10px}}
+        .section-label{{font-size:11px;font-weight:800;letter-spacing:0;color:var(--text3);
+            margin:20px 0 10px}}
         .platform-chips{{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}}
         .chip{{padding:7px 14px;border-radius:20px;border:1px solid var(--border);
             background:var(--surface2);color:var(--text3);font-size:11px;font-weight:600;
@@ -2276,7 +2484,7 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
         .configs-card{{background:var(--surface2);border:1px solid var(--border);border-radius:20px;
             padding:18px;margin-bottom:14px}}
         .configs-header{{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}}
-        .configs-title{{font-size:12px;font-weight:700;color:var(--text);letter-spacing:.5px}}
+        .configs-title{{font-family:'Lalezar','Vazirmatn',serif;font-size:18px;font-weight:400;color:var(--text);letter-spacing:0;line-height:1.7}}
         .configs-count{{font-size:10px;color:var(--text3);background:var(--gold-dim);
             border:1px solid var(--border);border-radius:6px;padding:2px 8px}}
         .config-item{{display:flex;align-items:center;justify-content:space-between;
@@ -2285,10 +2493,10 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
         .config-icon{{width:32px;height:32px;border-radius:8px;background:var(--gold-dim);
             display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:14px}}
         .config-info{{flex:1;min-width:0}}
-        .config-name{{font-size:12.5px;font-weight:600;color:var(--text);
+        .config-name{{font-size:13px;font-weight:600;color:var(--text);
             overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
         .config-type{{font-size:10px;color:var(--text3);margin-top:1px}}
-        .ping-badge{{margin-left:8px;font-weight:700}}
+        .ping-badge{{margin-inline-start:8px;font-weight:700}}
         .config-actions{{display:flex;gap:5px;flex-shrink:0}}
         .btn-copy{{padding:5px 10px;border-radius:7px;border:1px solid rgba(255,215,0,0.2);
             background:var(--gold-dim);color:var(--gold);font-size:10.5px;font-weight:700;
@@ -2315,10 +2523,10 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
             padding:24px;width:90%;max-width:300px;text-align:center;position:relative;
             box-shadow:var(--gold-glow)}}
         .mo-box img{{max-width:200px;border-radius:8px;border:3px solid var(--border);margin:12px 0}}
-        .mo-close{{position:absolute;top:12px;right:12px;background:var(--surface2);
+        .mo-close{{position:absolute;top:12px;left:12px;right:auto;background:var(--surface2);
             border:1px solid var(--border);color:var(--text3);width:28px;height:28px;
             border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px}}
-        .mo-title{{font-size:12px;font-weight:700;color:var(--gold);letter-spacing:1px;margin-bottom:4px}}
+        .mo-title{{font-family:'Lalezar','Vazirmatn',serif;font-size:20px;font-weight:400;color:var(--gold);letter-spacing:0;line-height:1.7;margin-bottom:4px}}
 
         /* Toast */
         .toast{{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(16px);
@@ -2329,7 +2537,7 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
         .toast.show{{opacity:1;transform:translateX(-50%) translateY(0)}}
 
         /* Luffy footer links */
-        .footer-links{{display:flex;justify-content:center;gap:16px;padding:20px 0 10px}}
+        .footer-links{{display:flex;justify-content:center;gap:16px;padding:20px 0 10px;flex-wrap:wrap}}
         .footer-link{{display:flex;align-items:center;gap:5px;color:var(--text3);
             font-size:11px;font-weight:600;text-decoration:none;transition:color .2s}}
         .footer-link:hover{{color:var(--gold)}}
@@ -2354,9 +2562,9 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
                 <ellipse cx="42" cy="17" rx="23" ry="5.5" fill="#C8900A" stroke="#FFD700" stroke-width="1"/>
                 <path d="M20 45 Q21.5 41.5 42 39.5 Q62.5 41.5 64 45" fill="none" stroke="#CC2200" stroke-width="4.5" stroke-linecap="round" opacity=".92"/>
             </svg>
-            <span class="header-title">LUFFY</span>
+            <span class="header-title">لافی</span>
         </div>
-        <div class="header-sub">{link['label']} · Connection Status</div>
+        <div class="header-sub">{link['label']} · وضعیت اتصال</div>
     </div>
 
     <!-- Usage Ring Card -->
@@ -2373,23 +2581,23 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
                 <circle class="ring-fill" cx="80" cy="80" r="70"/>
             </svg>
             <div class="ring-center">
-                <div class="ring-pct">{pct:.0f}%</div>
-                <div class="ring-label">USED</div>
+                <div class="ring-pct">{fa_num(f'{pct:.0f}')}٪</div>
+                <div class="ring-label">مصرف‌شده</div>
             </div>
         </div>
 
         <div class="usage-nums">
-            {_fmt_bytes(used)} <span>/ {_fmt_bytes(limit) if limit > 0 else '∞'}</span>
+            {fmt_bytes_fa(used)} <span>/ {fmt_bytes_fa(limit) if limit > 0 else '∞'}</span>
         </div>
-        <div class="usage-sub">{rem_str} remaining</div>
+        <div class="usage-sub">{rem_str} باقی‌مانده</div>
 
         <div class="info-row">
             <div class="info-box">
-                <div class="info-box-label">Status</div>
+                <div class="info-box-label">وضعیت</div>
                 <div class="info-box-val {'green' if is_active else 'red'}">{status_text}</div>
             </div>
             <div class="info-box">
-                <div class="info-box-label">Expires</div>
+                <div class="info-box-label">انقضا</div>
                 <div class="info-box-val gold">{expiry_str}</div>
                 <div class="info-box-sub">{expiry_date_str}</div>
             </div>
@@ -2398,20 +2606,20 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
 
     <!-- QR Code Card -->
     <div class="qr-card">
-        <div class="qr-label">Scan to Add</div>
+        <div class="qr-label">برای افزودن، اسکن کن</div>
         <div class="qr-wrap">
             <img src="https://api.qrserver.com/v1/create-qr-code/?size=240x240&color=000000&bgcolor=ffffff&data={quote(sub_url)}" alt="QR">
         </div>
-        <div class="qr-label">Subscription Link</div>
+        <div class="qr-label">لینک اشتراک</div>
         <div class="sub-link-display" onclick="copySub()">{get_domain()}/sub/{uid}</div>
         <button class="copy-sub-btn" onclick="copySub()">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-            Copy Subscription Link
+            کپی لینک اشتراک
         </button>
     </div>
 
     <!-- Easy Import Section -->
-    <div class="section-label">Easy Import</div>
+    <div class="section-label">افزودن آسان</div>
     <div class="platform-chips" id="platform-chips">
         <div class="chip active" onclick="setPlatform('Android',this)"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" style="vertical-align:-2px;margin-right:3px"><path d="M7.2 8h9.6a5 5 0 0 0-2-3.5l1-1.7a.35.35 0 0 0-.6-.35l-1.05 1.8A5.6 5.6 0 0 0 12 3.7c-.78 0-1.5.15-2.15.4L8.8 2.3a.35.35 0 0 0-.6.35l1 1.7A5 5 0 0 0 7.2 8zm2.55-1.6a.8.8 0 1 1 0-1.6.8.8 0 0 1 0 1.6zm4.5 0a.8.8 0 1 1 0-1.6.8.8 0 0 1 0 1.6zM6.5 9.2h11v8.3a1 1 0 0 1-1 1h-1.2v2.8a1.3 1.3 0 0 1-2.6 0v-2.8h-1.4v2.8a1.3 1.3 0 0 1-2.6 0v-2.8H7.5a1 1 0 0 1-1-1V9.2zM4 9.2a1.3 1.3 0 0 1 1.3 1.3v4.8a1.3 1.3 0 0 1-2.6 0v-4.8A1.3 1.3 0 0 1 4 9.2zm16 0a1.3 1.3 0 0 1 1.3 1.3v4.8a1.3 1.3 0 0 1-2.6 0v-4.8A1.3 1.3 0 0 1 20 9.2z"/></svg> Android</div>
         <div class="chip" onclick="setPlatform('iOS',this)"><svg width="12" height="15" viewBox="0 0 384 512" fill="currentColor" style="vertical-align:-2px;margin-right:3px"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg> iOS</div>
@@ -2427,10 +2635,10 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
     <!-- Configs -->
     <div class="configs-card">
         <div class="configs-header">
-            <div class="configs-title">CONFIGS</div>
-            <div class="configs-count" id="configs-count">0 configs</div>
+            <div class="configs-title">کانفیگ‌ها</div>
+            <div class="configs-count" id="configs-count">{fa_num(len(configs))} کانفیگ</div>
         </div>
-        <button class="ping-btn" id="ping-all-btn" onclick="pingAll()">⚡ Ping test all</button>
+        <button class="ping-btn" id="ping-all-btn" onclick="pingAll()">⚡ تست پینگ همه</button>
         <div id="config-list"></div>
     </div>
 
@@ -2438,15 +2646,23 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
     <div class="footer-links">
         <a href="https://t.me/Luffy_sh_op" target="_blank" class="footer-link">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-2.032 9.57c-.148.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.895.651z"/></svg>
-            Telegram Channel
+            کانال تلگرام
         </a>
         <a href="https://t.me/chef_vpn" target="_blank" class="footer-link">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-2.032 9.57c-.148.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.895.651z"/></svg>
-            Chef
+            پشتیبانی
         </a>
         <a href="https://github.com/luffy-sh-op/LUFFY_PANEL/tree/main" target="_blank" class="footer-link">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
-            GitHub
+            گیت‌هاب
+        </a>
+        <a href="https://www.linkedin.com/in/amirali-ghamkhar-b076b5291" target="_blank" rel="noopener" class="footer-link">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+            لینکدین
+        </a>
+        <a href="https://github.com/AmiraliGhamkhar" target="_blank" rel="noopener" class="footer-link">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
+            امیرعلی غمخوار
         </a>
     </div>
 
@@ -2456,10 +2672,10 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
 <div class="mo" id="qr-modal" onclick="if(event.target===this)this.classList.remove('show')">
     <div class="mo-box">
         <button class="mo-close" onclick="document.getElementById('qr-modal').classList.remove('show')">✕</button>
-        <div class="mo-title">QR CODE</div>
+        <div class="mo-title">کد QR</div>
         <img id="qr-modal-img" src="" alt="QR">
         <div id="qr-modal-name" style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:8px"></div>
-        <button onclick="downloadQR()" style="width:100%;padding:10px;border-radius:8px;background:linear-gradient(135deg,#FFD700,#FFC200);border:none;color:#000;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit">Download QR</button>
+        <button onclick="downloadQR()" style="width:100%;padding:10px;border-radius:8px;background:linear-gradient(135deg,#FFD700,#FFC200);border:none;color:#000;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit">دانلود کد QR</button>
     </div>
 </div>
 
@@ -2502,36 +2718,36 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
 
     const APPS = {{
         Android: [
-            {{name:"Hiddify", color:"#2F6FED", action:"Tap to open", url:hiddifyImportUrl}},
-            {{name:"v2rayNG", color:"#16A34A", action:"Tap to open", url:"v2rayng://install-sub?url=" + encodeURIComponent(subUrl)}},
-            {{name:"V2Box", color:"#F97316", action:"Tap to open", url:"v2box://install-sub?url=" + encodeURIComponent(subUrl)}},
-            {{name:"Happ", color:"#7C3AED", action:"Tap to open", url:"happ://add/" + encodeURIComponent(subUrl)}},
-            {{name:"NPV Tunnel", color:"#475569", action:"Tap to copy link", url:null}},
-            {{name:"clash mi", color:"#DC2626", action:"Tap to open", url:"clash://install-config?url=" + encodeURIComponent(subUrl), fallbackUrl:"clashmeta://install-config?url=" + encodeURIComponent(subUrl)}},
+            {{name:"Hiddify", color:"#2F6FED", action:"برای باز کردن بزن", url:hiddifyImportUrl}},
+            {{name:"v2rayNG", color:"#16A34A", action:"برای باز کردن بزن", url:"v2rayng://install-sub?url=" + encodeURIComponent(subUrl)}},
+            {{name:"V2Box", color:"#F97316", action:"برای باز کردن بزن", url:"v2box://install-sub?url=" + encodeURIComponent(subUrl)}},
+            {{name:"Happ", color:"#7C3AED", action:"برای باز کردن بزن", url:"happ://add/" + encodeURIComponent(subUrl)}},
+            {{name:"NPV Tunnel", color:"#475569", action:"برای کپی لینک بزن", url:null}},
+            {{name:"clash mi", color:"#DC2626", action:"برای باز کردن بزن", url:"clash://install-config?url=" + encodeURIComponent(subUrl), fallbackUrl:"clashmeta://install-config?url=" + encodeURIComponent(subUrl)}},
         ],
         iOS: [
-            {{name:"Hiddify", color:"#2F6FED", action:"Tap to open", url:hiddifyImportUrl}},
-            {{name:"Happ", color:"#7C3AED", action:"Tap to open", url:"happ://add/" + encodeURIComponent(subUrl)}},
-            {{name:"clash mi", color:"#DC2626", action:"Tap to open", url:"clash://install-config?url=" + encodeURIComponent(subUrl), fallbackUrl:"clashmeta://install-config?url=" + encodeURIComponent(subUrl)}},
+            {{name:"Hiddify", color:"#2F6FED", action:"برای باز کردن بزن", url:hiddifyImportUrl}},
+            {{name:"Happ", color:"#7C3AED", action:"برای باز کردن بزن", url:"happ://add/" + encodeURIComponent(subUrl)}},
+            {{name:"clash mi", color:"#DC2626", action:"برای باز کردن بزن", url:"clash://install-config?url=" + encodeURIComponent(subUrl), fallbackUrl:"clashmeta://install-config?url=" + encodeURIComponent(subUrl)}},
         ],
         Windows: [
-            {{name:"Hiddify", color:"#2F6FED", action:"Tap to open", url:hiddifyImportUrl}},
-            {{name:"v2rayN", color:"#16A34A", action:"Tap to copy link", url:null}},
-            {{name:"clash mi", color:"#DC2626", action:"Tap to open", url:"clash://install-config?url=" + encodeURIComponent(subUrl)}},
+            {{name:"Hiddify", color:"#2F6FED", action:"برای باز کردن بزن", url:hiddifyImportUrl}},
+            {{name:"v2rayN", color:"#16A34A", action:"برای کپی لینک بزن", url:null}},
+            {{name:"clash mi", color:"#DC2626", action:"برای باز کردن بزن", url:"clash://install-config?url=" + encodeURIComponent(subUrl)}},
         ],
         macOS: [
-            {{name:"Hiddify", color:"#2F6FED", action:"Tap to open", url:hiddifyImportUrl}},
+            {{name:"Hiddify", color:"#2F6FED", action:"برای باز کردن بزن", url:hiddifyImportUrl}},
         ],
         Linux: [
-            {{name:"Hiddify", color:"#2F6FED", action:"Tap to open", url:hiddifyImportUrl}},
-            {{name:"clash mi", color:"#DC2626", action:"Tap to open", url:"clash://install-config?url=" + encodeURIComponent(subUrl)}},
+            {{name:"Hiddify", color:"#2F6FED", action:"برای باز کردن بزن", url:hiddifyImportUrl}},
+            {{name:"clash mi", color:"#DC2626", action:"برای باز کردن بزن", url:"clash://install-config?url=" + encodeURIComponent(subUrl)}},
         ],
         AndroidTV: [
-            {{name:"Hiddify", color:"#2F6FED", action:"Tap to open", url:hiddifyImportUrl}},
-            {{name:"V2Box", color:"#F97316", action:"Tap to open", url:"v2box://install-sub?url=" + encodeURIComponent(subUrl)}},
+            {{name:"Hiddify", color:"#2F6FED", action:"برای باز کردن بزن", url:hiddifyImportUrl}},
+            {{name:"V2Box", color:"#F97316", action:"برای باز کردن بزن", url:"v2box://install-sub?url=" + encodeURIComponent(subUrl)}},
         ],
         AppleTV: [
-            {{name:"Hiddify", color:"#2F6FED", action:"Tap to open", url:hiddifyImportUrl}},
+            {{name:"Hiddify", color:"#2F6FED", action:"برای باز کردن بزن", url:hiddifyImportUrl}},
         ],
     }};
 
@@ -2609,11 +2825,11 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
             if (fallbackUrl) {{
                 tryOpenScheme(fallbackUrl, () => {{
                     safeCopy(subUrl);
-                    showToast(name + ' not detected - subscription link copied, paste it inside the app');
+                    showToast(name + ' پیدا نشد - لینک اشتراک کپی شد، داخل برنامه پیستش کن');
                 }});
             }} else {{
                 safeCopy(subUrl);
-                showToast(name + ' not detected - subscription link copied, paste it inside the app');
+                showToast(name + ' پیدا نشد - لینک اشتراک کپی شد، داخل برنامه پیستش کن');
             }}
         }});
     }}
@@ -2640,10 +2856,10 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
     // Render configs
     function renderConfigs() {{
         const list = document.getElementById('config-list');
-        document.getElementById('configs-count').textContent = configs.length + ' config' + (configs.length !== 1 ? 's' : '');
+        document.getElementById('configs-count').textContent = pn(configs.length) + ' کانفیگ';
         list.innerHTML = configs.map((cfg, i) => {{
             const parts = cfg.split('#');
-            const remark = parts[1] ? decodeURIComponent(parts[1]) : 'Config ' + (i+1);
+            const remark = parts[1] ? decodeURIComponent(parts[1]) : 'کانفیگ ' + pn(i+1);
             return `
                 <div class="config-item">
                     <div class="config-icon">🌐</div>
@@ -2652,7 +2868,7 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
                         <div class="config-type">${{configBadge(cfg)}} <span class="ping-badge" id="ping-badge-${{i}}">-</span></div>
                     </div>
                     <div class="config-actions">
-                        <button class="btn-copy" onclick="copyConfig('${{cfg.replace(/'/g,"\\'")}}')" title="Copy">Copy</button>
+                        <button class="btn-copy" onclick="copyConfig('${{cfg.replace(/'/g,"\\'")}}')" title="کپی">کپی</button>
                         <button class="btn-qr" onclick="showQR('${{cfg.replace(/'/g,"\\'")}}',' ${{remark}}')" title="QR">QR</button>
                     </div>
                 </div>
@@ -2662,12 +2878,12 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
 
     function copySub() {{
         safeCopy(subUrl);
-        showToast('Subscription link copied!');
+        showToast('لینک اشتراک کپی شد!');
     }}
 
     function copyConfig(txt) {{
         safeCopy(txt);
-        showToast('Config copied!');
+        showToast('کانفیگ کپی شد!');
     }}
 
     function showQR(txt, name) {{
@@ -2705,30 +2921,34 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
 
     async function pingAll() {{
         const btn = document.getElementById('ping-all-btn');
-        if (btn) {{ btn.disabled = true; btn.textContent = '⏳ Testing...'; }}
-        showToast('Testing ping for all configs...');
+        if (btn) {{ btn.disabled = true; btn.textContent = '⏳ در حال بررسی…'; }}
+        showToast('در حال بررسی پینگ همه‌ی کانفیگ‌ها…');
 
         await Promise.all(configs.map(async (cfg, i) => {{
             const badge = document.getElementById('ping-badge-' + i);
             if (badge) {{ badge.textContent = '...'; badge.style.color = 'var(--text3)'; }}
             const hp = parseHostPort(cfg);
             if (!hp) {{
-                if (badge) {{ badge.textContent = 'N/A'; badge.style.color = 'var(--text3)'; }}
+                if (badge) {{ badge.textContent = '—'; badge.style.color = 'var(--text3)'; }}
                 return;
             }}
             const ms = await pingHost(hp.host, hp.port);
             if (!badge) return;
             if (ms === null) {{
-                badge.textContent = 'Timeout';
+                badge.textContent = 'بی‌پاسخ';
                 badge.style.color = 'var(--red)';
             }} else {{
-                badge.textContent = ms + ' ms';
+                badge.textContent = pn(ms) + ' میلی‌ثانیه';
                 badge.style.color = ms < 150 ? 'var(--green)' : ms < 400 ? 'var(--yellow)' : 'var(--red)';
             }}
         }}));
 
-        if (btn) {{ btn.disabled = false; btn.textContent = '⚡ Ping test all'; }}
-        showToast('Ping test complete');
+        if (btn) {{ btn.disabled = false; btn.textContent = '⚡ تست پینگ همه'; }}
+        showToast('بررسی پینگ انجام شد');
+    }}
+
+    function pn(v) {{
+        return String(v).replace(/[0-9]/g, function(d) {{ return '۰۱۲۳۴۵۶۷۸۹'[d]; }});
     }}
 
     function showToast(msg) {{
@@ -2916,15 +3136,15 @@ async def subscription_endpoint(uid: str, request: Request):
     async with LINKS_LOCK:
         link = LINKS.get(uid)
         if link is None:
-            raise HTTPException(status_code=404, detail="link not found")
+            raise HTTPException(status_code=404, detail=M(request, "sub_link_not_found"))
         link = dict(link)
         
     if not link["active"]:
-        raise HTTPException(status_code=403, detail="link disabled")
+        raise HTTPException(status_code=403, detail=M(request, "sub_link_disabled"))
         
     expires_at = parse_expires_at(link.get("expires_at"))
     if expires_at is not None and expires_at < datetime.now(timezone.utc):
-        raise HTTPException(status_code=403, detail="link expired")
+        raise HTTPException(status_code=403, detail=M(request, "sub_link_expired"))
 
     async with CUSTOM_ADDRESSES_LOCK:
         addresses = list(CUSTOM_ADDRESSES)
@@ -3342,7 +3562,10 @@ async def websocket_tunnel(websocket: WebSocket, auth: str, uuid: str):
                     duration_s = 0
                 async with LINKS_LOCK:
                     label = LINKS.get(info.get("uuid"), {}).get("label", info.get("uuid", uuid))
-                extra = f"duration {duration_s}s, {_fmt_bytes(info.get('bytes', 0))}"
+                if bot_lang() == "fa":
+                    extra = f"مدت: {_num(duration_s)} ثانیه، حجم: {bfmt(info.get('bytes', 0))}"
+                else:
+                    extra = f"duration {duration_s}s, {_fmt_bytes(info.get('bytes', 0))}"
                 await _log_connection_event("disconnect", label, info.get("uuid", uuid), info.get("ip", client_ip), extra)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3353,14 +3576,28 @@ app.include_router(xhttp_router)
 
 # ── HTML Panel (Gold/Neon Theme) ─────────────────────────────────────────
 PANEL_HTML = r"""<!DOCTYPE html>
-<html lang="en">
+<html lang="fa" dir="rtl">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Luffy Panel</title>
-<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=Inter:wght@300;400;500;600;700&family=Vazirmatn:wght@400;600;700;800&display=swap" rel="stylesheet">
+<title>پنل لافی</title>
+<!-- فونت‌های فارسی به‌صورت لوکال سرو می‌شوند (بدون نیاز به اینترنت / فیلترشکن) -->
+<link rel="preload" href="/static/fonts/Vazirmatn-VF.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/static/fonts/Lalezar-Regular.woff2" as="font" type="font/woff2" crossorigin>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
+/* ── فونت‌های فارسی: وزیرمتن (متن) و لاله‌زار (تیترها) ───────────────────── */
+@font-face{
+  font-family:'Vazirmatn';
+  src:url('/static/fonts/Vazirmatn-VF.woff2') format('woff2-variations'),
+      url('/static/fonts/Vazirmatn-VF.woff2') format('woff2');
+  font-weight:100 900;font-style:normal;font-display:swap;unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+2000-206F,U+2074,U+20AC,U+2122,U+2212,U+FB50-FDFF,U+FE70-FEFF,U+0600-06FF,U+0750-077F,U+08A0-08FF;
+}
+@font-face{
+  font-family:'Lalezar';
+  src:url('/static/fonts/Lalezar-Regular.woff2') format('woff2');
+  font-weight:400;font-style:normal;font-display:swap;
+}
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
   --gold:#FFD700;--gold2:#FFC200;--gold3:#C8900A;--gold-dim:rgba(255,215,0,0.12);
@@ -3383,8 +3620,12 @@ body.light-mode{
   --gold-glow:0 4px 14px rgba(0,0,0,0.08);
 }
 html,body{height:100%;background:var(--black);transition:background .3s,color .3s}
-body{font-family:'Inter','Vazirmatn',sans-serif;color:var(--text);display:flex;min-height:100vh}
+body{font-family:'Vazirmatn','Tahoma',system-ui,-apple-system,sans-serif;color:var(--text);display:flex;min-height:100vh}
 body[dir="rtl"]{direction:rtl;text-align:right}
+body[dir="ltr"]{direction:ltr;text-align:left}
+/* در حالت فارسی حروف بزرگ/فاصله‌گذاری انگلیسی معنا ندارد */
+body[dir="rtl"] .stat-label,body[dir="rtl"] .fl,body[dir="rtl"] .tbl th,body[dir="rtl"] .tag{text-transform:none;letter-spacing:0}
+body[dir="rtl"] .live-logs-container{direction:ltr;text-align:left}
 ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,215,0,0.2);border-radius:4px}
 .bg-fixed{position:fixed;inset:0;z-index:0;pointer-events:none;
   background:radial-gradient(ellipse 70% 50% at 50% -10%,rgba(255,215,0,0.07),transparent 60%),
@@ -3397,18 +3638,18 @@ body[dir="rtl"]{direction:rtl;text-align:right}
 .light-mode .grid-fixed{opacity:.4}
 
 /* Sidebar */
-.sidebar{position:fixed;left:0;top:0;bottom:0;width:var(--nav-w);background:var(--surface);
-  border-right:1px solid var(--border);display:flex;flex-direction:column;z-index:100;
+.sidebar{position:fixed;right:0;top:0;bottom:0;width:var(--nav-w);background:var(--surface);
+  border-left:1px solid var(--border);display:flex;flex-direction:column;z-index:100;
   transition:all .3s cubic-bezier(.4,0,.2,1);backdrop-filter:blur(20px)}
-.sidebar::after{content:'';position:absolute;top:0;right:0;bottom:0;width:1px;
+.sidebar::after{content:'';position:absolute;top:0;left:0;bottom:0;width:1px;
   background:linear-gradient(180deg,transparent,rgba(255,215,0,0.4) 30%,rgba(255,215,0,0.4) 70%,transparent)}
 .light-mode .sidebar::after{display:none}
 .sb-brand{padding:16px 0;display:flex;flex-direction:column;align-items:center;gap:2px;
   border-bottom:1px solid var(--border);flex-shrink:0}
 .sb-hat{filter:drop-shadow(0 0 10px rgba(255,215,0,.5));transition:filter .3s}
 .sb-hat:hover{filter:drop-shadow(0 0 18px rgba(255,215,0,.9))}
-.sb-title{font-family:'Cinzel',serif;font-size:8px;letter-spacing:.18em;color:rgba(255,215,0,.6);
-  text-transform:uppercase;white-space:nowrap;overflow:hidden}
+.sb-title{font-family:'Lalezar','Vazirmatn',serif;font-size:14px;color:rgba(255,215,0,.75);
+  white-space:nowrap;overflow:hidden;line-height:1.6}
 .sb-nav{flex:1;display:flex;flex-direction:column;justify-content:flex-end;padding-bottom:12px;
   gap:2px;padding-left:8px;padding-right:8px}
 .nav-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
@@ -3424,8 +3665,8 @@ body[dir="rtl"]{direction:rtl;text-align:right}
 .nav-item.active::before{opacity:1}
 .nav-icon{width:18px;height:18px;flex-shrink:0;transition:transform .2s}
 .nav-item:hover .nav-icon,.nav-item.active .nav-icon{transform:scale(1.1)}
-.nav-label{font-size:8.5px;font-weight:600;letter-spacing:.05em;white-space:nowrap;overflow:hidden}
-.nav-badge{position:absolute;top:5px;right:5px;background:var(--gold);color:#000;font-size:8px;
+.nav-label{font-size:9.5px;font-weight:600;letter-spacing:0;white-space:nowrap;overflow:hidden}
+.nav-badge{position:absolute;top:5px;left:5px;right:auto;background:var(--gold);color:#000;font-size:8px;
   font-weight:800;min-width:14px;height:14px;border-radius:7px;display:flex;align-items:center;
   justify-content:center;padding:0 3px}
 .sb-bottom{padding:8px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:6px;flex-shrink:0}
@@ -3446,7 +3687,9 @@ body[dir="rtl"]{direction:rtl;text-align:right}
 .theme-toggle:hover{background:var(--surface3);color:var(--gold);border-color:var(--gold)}
 
 /* Social links in sidebar */
-.sb-social{display:flex;gap:4px;margin-bottom:2px}
+.sb-social{display:flex;gap:4px;margin-bottom:2px;flex-wrap:wrap;justify-content:center}
+/* در سایدبارِ باریک، دکمه‌ها دو‌تا‌دوتا ردیف می‌شوند */
+.sidebar .sb-social-btn{flex:0 0 calc(50% - 2px)}
 .sb-social-btn{flex:1;display:flex;align-items:center;justify-content:center;padding:7px 4px;
   border:1px solid var(--border);border-radius:8px;color:var(--text3);cursor:pointer;
   transition:all .2s;text-decoration:none;background:none}
@@ -3458,12 +3701,12 @@ body[dir="rtl"]{direction:rtl;text-align:right}
 .mob-social .sb-social-btn svg{width:16px;height:16px}
 
 /* Main */
-.main{margin-left:var(--nav-w);flex:1;padding:24px 28px 48px;min-height:100vh;position:relative;z-index:1}
+.main{margin-right:var(--nav-w);flex:1;padding:24px 28px 48px;min-height:100vh;position:relative;z-index:1}
 .page{display:none;animation:pgIn .35s ease}
 .page.active{display:block}
 @keyframes pgIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 .page-header{margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
-.page-title{font-family:'Cinzel',serif;font-size:16px;font-weight:700;color:var(--text);letter-spacing:.04em}
+.page-title{font-family:'Lalezar','Vazirmatn',serif;font-size:22px;font-weight:400;color:var(--text);letter-spacing:0;line-height:1.9}
 .page-sub{font-size:11px;color:var(--text3);margin-top:3px;letter-spacing:.02em}
 .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
 .stat-card{background:var(--surface2);border:1px solid var(--border);border-radius:12px;
@@ -3473,7 +3716,7 @@ body[dir="rtl"]{direction:rtl;text-align:right}
 .light-mode .stat-card::before{display:none}
 .stat-card:hover{border-color:var(--border2);transform:translateY(-2px);box-shadow:var(--gold-glow)}
 @keyframes cIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
-.stat-label{font-size:9.5px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
+.stat-label{font-size:11px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
 .stat-val{font-size:20px;font-weight:700;color:var(--text);letter-spacing:-.02em}
 .stat-unit{font-size:11px;font-weight:400;color:var(--text3)}
 .card{background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:16px;
@@ -3484,7 +3727,7 @@ body[dir="rtl"]{direction:rtl;text-align:right}
 .card-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
 .card-title{font-size:12px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px}
 .chart-container{height:170px;width:100%}
-.btn{font-family:inherit;font-size:11.5px;font-weight:700;border-radius:8px;padding:7px 14px;
+.btn{font-family:inherit;font-size:12.5px;font-weight:700;border-radius:8px;padding:7px 14px;
   cursor:pointer;display:inline-flex;align-items:center;gap:5px;border:none;transition:all .2s;letter-spacing:.03em}
 .btn-gold{background:linear-gradient(135deg,#FFD700,#FFC200);color:#000;box-shadow:0 0 16px rgba(255,215,0,.25)}
 .btn-gold:hover{filter:brightness(1.1);transform:translateY(-1px);box-shadow:0 0 24px rgba(255,215,0,.4)}
@@ -3494,9 +3737,9 @@ body[dir="rtl"]{direction:rtl;text-align:right}
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .tbl-wrap{overflow-x:auto}
 .tbl{width:100%;border-collapse:collapse}
-.tbl th{text-align:left;font-size:9.5px;font-weight:700;color:var(--text3);padding:9px 11px;
+.tbl th{text-align:start;font-size:10.5px;font-weight:700;color:var(--text3);padding:9px 11px;
   text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);background:var(--surface3)}
-.tbl td{padding:9px 11px;border-bottom:1px solid var(--border);font-size:12.5px;vertical-align:middle}
+.tbl td{padding:9px 11px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle}
 .tag{display:inline-flex;align-items:center;padding:2px 7px;border-radius:4px;font-size:9px;
   font-weight:800;letter-spacing:.05em;text-transform:uppercase}
 .tag-vless{background:var(--gold-dim);color:var(--gold);border:1px solid var(--border)}
@@ -3511,22 +3754,22 @@ body[dir="rtl"]{direction:rtl;text-align:right}
 .toggle{width:32px;height:17px;border-radius:9px;background:var(--surface3);position:relative;
   cursor:pointer;transition:all .28s;border:1px solid var(--border);flex-shrink:0}
 .toggle::after{content:'';position:absolute;width:11px;height:11px;border-radius:50%;
-  background:var(--text3);top:2px;left:2px;transition:all .28s cubic-bezier(.4,0,.2,1)}
+  background:var(--text3);top:2px;right:2px;left:auto;transition:all .28s cubic-bezier(.4,0,.2,1)}
 .toggle.on{background:var(--green);border-color:var(--green);box-shadow:0 0 10px rgba(74,222,128,.3)}
-.toggle.on::after{left:17px;background:#fff}
+.toggle.on::after{right:17px;left:auto;background:#fff}
 .sys-bar{height:6px;background:var(--border);border-radius:3px;overflow:hidden}
 .sys-fill{height:100%;border-radius:3px;transition:width .4s}
 .sl-item{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)}
-.sl-k{color:var(--text3);font-size:11.5px}
-.sl-v{color:var(--text);font-weight:600;font-size:11.5px}
+.sl-k{color:var(--text3);font-size:12.5px}
+.sl-v{color:var(--text);font-weight:600;font-size:12.5px}
 .fg{display:flex;flex-direction:column;gap:4px;margin-bottom:11px}
-.fl{font-size:9.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.08em}
+.fl{font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.08em}
 .fi,.fs{padding:8px 12px;border-radius:8px;border:1px solid var(--border);font-family:inherit;
-  font-size:12.5px;outline:none;color:var(--text);background:var(--surface);transition:all .2s}
+  font-size:13px;outline:none;color:var(--text);background:var(--surface);transition:all .2s}
 .fi:focus,.fs:focus{border-color:var(--gold);box-shadow:0 0 0 3px rgba(255,215,0,.08)}
 .fr{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
 .fr .fg{margin-bottom:0;flex:1;min-width:90px}
-.act-btn{font-family:inherit;font-size:9.5px;font-weight:700;border-radius:6px;padding:4px 8px;
+.act-btn{font-family:inherit;font-size:10.5px;font-weight:700;border-radius:6px;padding:4px 8px;
   cursor:pointer;display:inline-flex;align-items:center;gap:3px;border:1px solid;transition:all .18s}
 .act-copy{background:var(--gold-dim);color:var(--gold);border-color:var(--border)}
 .act-sub{background:var(--green-dim);color:var(--green);border-color:rgba(74,222,128,.2)}
@@ -3545,9 +3788,9 @@ body[dir="rtl"]{direction:rtl;text-align:right}
   width:100%;max-width:460px;position:relative;box-shadow:var(--gold-glow);
   transform:scale(.92);opacity:0;transition:all .38s cubic-bezier(.34,1.56,.64,1)}
 .mo.show .mo-box{transform:scale(1);opacity:1}
-.mo-title{font-family:'Cinzel',serif;font-size:14px;font-weight:700;margin-bottom:16px;
-  color:var(--gold);letter-spacing:.06em}
-.mo-close{position:absolute;top:14px;right:14px;background:var(--surface3);border:1px solid var(--border);
+.mo-title{font-family:'Lalezar','Vazirmatn',serif;font-size:20px;font-weight:400;margin-bottom:16px;
+  color:var(--gold);letter-spacing:0;line-height:1.7}
+.mo-close{position:absolute;top:14px;left:14px;right:auto;background:var(--surface3);border:1px solid var(--border);
   color:var(--text3);width:30px;height:30px;border-radius:7px;cursor:pointer;display:flex;
   align-items:center;justify-content:center;font-size:14px}
 .qr-box{text-align:center;padding:20px;background:var(--surface3);border-radius:12px;
@@ -3555,13 +3798,13 @@ body[dir="rtl"]{direction:rtl;text-align:right}
 .qr-box img{max-width:200px;border-radius:8px;border:3px solid var(--border);box-shadow:var(--gold-glow)}
 .tb{display:flex;align-items:center;gap:7px;margin-bottom:14px;flex-wrap:wrap}
 .search-wrap{flex:1;min-width:160px;position:relative}
-.search-wrap svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text3)}
-.search-wrap input{width:100%;padding:9px 12px 9px 34px;background:var(--surface2);
+.search-wrap svg{position:absolute;right:12px;left:auto;top:50%;transform:translateY(-50%);color:var(--text3)}
+.search-wrap input{width:100%;padding:9px 34px 9px 12px;background:var(--surface2);
   border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;
   font-family:inherit;outline:none}
 .search-wrap input:focus{border-color:var(--gold)}
 .filter-chips{display:flex;gap:3px;padding:3px;background:var(--surface2);border:1px solid var(--border);border-radius:8px}
-.chip{padding:7px 12px;border-radius:6px;font-size:11.5px;font-weight:700;color:var(--text3);
+.chip{padding:7px 12px;border-radius:6px;font-size:12.5px;font-weight:700;color:var(--text3);
   cursor:pointer;border:none;background:none;transition:all .18s;font-family:inherit}
 .chip.active{background:var(--gold);color:#000}
 .m-cards{display:none;flex-direction:column;gap:12px}
@@ -3581,12 +3824,13 @@ body[dir="rtl"]{direction:rtl;text-align:right}
   display:flex;align-items:center;gap:6px}
 .alert-item{font-size:12px;margin-bottom:4px;color:var(--text);display:flex;justify-content:space-between}
 .live-logs-container{background:#000;border:1px solid var(--border);border-radius:8px;padding:12px;
-  font-family:monospace;font-size:11px;color:#FFD700;height:200px;overflow-y:auto;white-space:pre-wrap}
+  font-family:monospace;font-size:11px;color:#FFD700;height:200px;overflow-y:auto;white-space:pre-wrap;
+  direction:ltr;text-align:left}
 .login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;width:100%}
 .login-box{background:var(--surface2);border:1px solid var(--border2);border-radius:20px;
   padding:36px 32px;width:100%;max-width:360px;box-shadow:var(--gold-glow)}
 .login-logo{text-align:center;margin-bottom:28px}
-.login-title{font-family:'Cinzel',serif;font-size:22px;font-weight:900;color:var(--gold);letter-spacing:.1em}
+.login-title{font-family:'Lalezar','Vazirmatn',serif;font-size:30px;font-weight:400;color:var(--gold);letter-spacing:0;line-height:1.8}
 .login-sub{font-size:11px;color:var(--text3);margin-top:6px}
 
 /* Notification styles */
@@ -3603,7 +3847,7 @@ body[dir="rtl"]{direction:rtl;text-align:right}
 .notif-title{font-size:13px;font-weight:700;color:var(--text);margin-bottom:2px}
 .notif-msg{font-size:11px;color:var(--text3);line-height:1.4}
 .notif-time{font-size:10px;color:var(--text3);margin-top:4px}
-.notif-link{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;color:var(--gold);text-decoration:none;margin-top:4px}
+.notif-link{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:600;color:var(--gold);text-decoration:none;margin-top:4px;font-family:inherit}
 .notif-link:hover{text-decoration:underline}
 .notif-dot{width:8px;height:8px;border-radius:50%;background:var(--gold);flex-shrink:0;margin-top:10px}
 
@@ -3611,7 +3855,7 @@ body[dir="rtl"]{direction:rtl;text-align:right}
 .pill-fill-gold{background:linear-gradient(90deg,var(--gold),var(--gold2))}
 
 @media(max-width:768px){
-  .mob-hd{display:flex;height:65px;padding:0 20px}
+  .mob-hd{display:flex;height:65px;padding:0 20px;flex-direction:row-reverse}
   .mob-tl-group .lang-btn{font-size:13px;padding:7px 10px;border-radius:8px}
   .theme-toggle{font-size:18px;padding:7px 10px;border-radius:8px}
   .mob-hd span{font-size:22px !important}
@@ -3626,10 +3870,10 @@ body[dir="rtl"]{direction:rtl;text-align:right}
   .nav-item{flex:1;padding:12px 0;border-radius:0}
   .nav-icon{width:24px;height:24px;margin-bottom:5px}
   .nav-label{font-size:10px;letter-spacing:0}
-  .nav-badge{top:6px;right:50%;transform:translateX(10px);min-width:18px;height:18px;font-size:10px}
+  .nav-badge{top:6px;left:50%;right:auto;transform:translateX(-10px);min-width:18px;height:18px;font-size:10px}
   .logout-mob{display:flex}
-  .main{margin-left:0;padding-top:85px;padding-left:18px;padding-right:18px;padding-bottom:100px}
-  .page-title{font-size:24px}
+  .main{margin-right:0;padding-top:85px;padding-left:18px;padding-right:18px;padding-bottom:100px}
+  .page-title{font-size:26px}
   .page-sub{font-size:13px;margin-top:5px}
   .btn{font-size:14px;padding:10px 18px}
   .btn-sm{font-size:12px;padding:8px 14px}
@@ -3675,15 +3919,15 @@ body[dir="rtl"]{direction:rtl;text-align:right}
           <ellipse cx="42" cy="17" rx="23" ry="5.5" fill="#C8900A" stroke="#FFD700" stroke-width="1"/>
           <path d="M20 45 Q21.5 41.5 42 39.5 Q62.5 41.5 64 45" fill="none" stroke="#CC2200" stroke-width="4.5" stroke-linecap="round" opacity=".92"/>
         </svg>
-        <div class="login-title">LUFFY PANEL</div>
-        <div class="login-sub">Enter your password to continue</div>
+        <div class="login-title">پنل لافی</div>
+        <div class="login-sub" data-en="Enter your password to continue" data-fa="برای ادامه، رمز عبور پنل را وارد کن">برای ادامه، رمز عبور پنل را وارد کن</div>
       </div>
       <div class="fg">
-        <label class="fl">PASSWORD</label>
-        <input class="fi" type="password" id="login-pw" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()">
+        <label class="fl" data-en="PASSWORD" data-fa="رمز عبور">رمز عبور</label>
+        <input class="fi" type="password" id="login-pw" placeholder="••••••••" dir="ltr" style="text-align:center" onkeydown="if(event.key==='Enter')doLogin()">
       </div>
-      <button class="btn btn-gold" onclick="doLogin()" style="width:100%;justify-content:center;padding:12px;margin-top:6px">LOGIN</button>
-      <div id="login-err" style="color:var(--red);font-size:12px;margin-top:10px;text-align:center;display:none">Invalid password</div>
+      <button class="btn btn-gold" onclick="doLogin()" style="width:100%;justify-content:center;padding:12px;margin-top:6px" data-en="LOGIN" data-fa="ورود">ورود</button>
+      <div id="login-err" style="color:var(--red);font-size:12px;margin-top:10px;text-align:center;display:none" data-en="Invalid password" data-fa="رمز عبور اشتباه است">رمز عبور اشتباه است</div>
     </div>
   </div>
 </div>
@@ -3706,9 +3950,15 @@ body[dir="rtl"]{direction:rtl;text-align:right}
         <a href="https://github.com/luffy-sh-op/LUFFY_PANEL/tree/main" target="_blank" class="sb-social-btn" title="GitHub">
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
         </a>
+        <a href="https://www.linkedin.com/in/amirali-ghamkhar-b076b5291" target="_blank" rel="noopener" class="sb-social-btn" title="لینکدین امیرعلی غمخوار">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+        </a>
+        <a href="https://github.com/AmiraliGhamkhar" target="_blank" rel="noopener" class="sb-social-btn" title="امیرعلی غمخوار (GitHub)">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
+        </a>
       </div>
     </div>
-    <span style="font-family:'Cinzel',serif;font-size:16px;font-weight:700;color:var(--gold);letter-spacing:2px">LUFFY</span>
+    <span style="font-family:'Lalezar','Vazirmatn',serif;font-size:22px;font-weight:400;color:var(--gold);letter-spacing:0">لافی</span>
   </div>
 
   <!-- SIDEBAR -->
@@ -3719,6 +3969,12 @@ body[dir="rtl"]{direction:rtl;text-align:right}
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-2.032 9.57c-.148.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.895.651z"/></svg>
       </a>
       <a href="https://github.com/luffy-sh-op/LUFFY_PANEL/tree/main" target="_blank" class="sb-social-btn" title="GitHub">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
+      </a>
+      <a href="https://www.linkedin.com/in/amirali-ghamkhar-b076b5291" target="_blank" rel="noopener" class="sb-social-btn" title="لینکدین امیرعلی غمخوار">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+      </a>
+      <a href="https://github.com/AmiraliGhamkhar" target="_blank" rel="noopener" class="sb-social-btn" title="امیرعلی غمخوار (GitHub)">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
       </a>
     </div>
@@ -3733,53 +3989,53 @@ body[dir="rtl"]{direction:rtl;text-align:right}
           <ellipse cx="35" cy="24" rx="5" ry="3" fill="rgba(255,255,255,.1)" transform="rotate(-20 35 24)"/>
         </svg>
       </div>
-      <div class="sb-title">LUFFY</div>
+      <div class="sb-title">لافی</div>
     </div>
     <nav class="sb-nav">
       <button class="nav-item active" data-page="dashboard">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-        <span class="nav-label" data-en="Dashboard" data-fa="داشبورد">Dashboard</span>
+        <span class="nav-label" data-en="Dashboard" data-fa="داشبورد">داشبورد</span>
       </button>
       <button class="nav-item" data-page="inbounds">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="23" y1="11" x2="17" y2="11"/><line x1="20" y1="8" x2="20" y2="14"/></svg>
-        <span class="nav-label" data-en="Inbounds" data-fa="اینباندها">Inbounds</span>
+        <span class="nav-label" data-en="Inbounds" data-fa="اینباندها">اینباندها</span>
         <span class="nav-badge" id="nb">0</span>
       </button>
       <button class="nav-item" data-page="traffic">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-        <span class="nav-label" data-en="Traffic" data-fa="ترافیک">Traffic</span>
+        <span class="nav-label" data-en="Traffic" data-fa="ترافیک">ترافیک</span>
       </button>
       <button class="nav-item" data-page="addresses">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
-        <span class="nav-label" data-en="Clean IP" data-fa="آی‌پی تمیز">Clean IP</span>
+        <span class="nav-label" data-en="Clean IP" data-fa="آی‌پی تمیز">آی‌پی تمیز</span>
       </button>
       <button class="nav-item" data-page="notifications">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
-        <span class="nav-label" data-en="Notifications" data-fa="اعلانات">Notifications</span>
+        <span class="nav-label" data-en="Notifications" data-fa="اعلانات">اعلانات</span>
         <span class="nav-badge" id="notif-badge" style="display:none">0</span>
       </button>
       <button class="nav-item" data-page="security">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-        <span class="nav-label" data-en="Security" data-fa="امنیت">Security</span>
+        <span class="nav-label" data-en="Security" data-fa="امنیت">امنیت</span>
       </button>
       <button class="nav-item" data-page="settings">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-        <span class="nav-label" data-en="Settings" data-fa="تنظیمات">Settings</span>
+        <span class="nav-label" data-en="Settings" data-fa="تنظیمات">تنظیمات</span>
       </button>
       <button class="nav-item logout-mob" onclick="doLogout()">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-        <span class="nav-label" data-en="Logout" data-fa="خروج">Logout</span>
+        <span class="nav-label" data-en="Logout" data-fa="خروج">خروج</span>
       </button>
     </nav>
     <div class="sb-bottom">
-      <button class="theme-toggle" onclick="toggleTheme()" id="theme-btn-desk" style="margin-bottom:4px;font-size:12px">🌙 Theme</button>
+      <button class="theme-toggle" onclick="toggleTheme()" id="theme-btn-desk" style="margin-bottom:4px;font-size:12px" data-en="Theme" data-fa="پوسته">🌙 پوسته</button>
       <div class="lang-row">
         <button class="lang-btn lang-en active" onclick="setLang('en')">EN</button>
         <button class="lang-btn lang-fa" onclick="setLang('fa')">FA</button>
       </div>
       <button class="logout-btn" onclick="doLogout()" style="margin-top:2px">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-        <span data-en="Logout" data-fa="خروج">Logout</span>
+        <span data-en="Logout" data-fa="خروج">خروج</span>
       </button>
     </div>
   </aside>
@@ -3791,7 +4047,7 @@ body[dir="rtl"]{direction:rtl;text-align:right}
     <section class="page active" id="page-dashboard">
       <div class="page-header">
         <div>
-          <div class="page-title" data-en="Dashboard" data-fa="داشبورد">Dashboard</div>
+          <div class="page-title" data-en="Dashboard" data-fa="داشبورد">داشبورد</div>
           <div class="page-sub" id="last-up">-</div>
         </div>
       </div>
@@ -3799,29 +4055,29 @@ body[dir="rtl"]{direction:rtl;text-align:right}
       <div class="alerts-box" id="alerts-box">
         <div class="alerts-title">
           <span>⚠️</span>
-          <span data-en="SYSTEM WARNINGS" data-fa="هشدارهای سیستم">SYSTEM WARNINGS</span>
+          <span data-en="SYSTEM WARNINGS" data-fa="هشدارهای سیستم">هشدارهای سیستم</span>
         </div>
         <div id="alerts-list"></div>
       </div>
 
       <div class="stats-row">
-        <div class="stat-card" style="animation-delay:.08s"><div class="stat-label" data-en="Traffic" data-fa="ترافیک">Traffic</div><div class="stat-val" id="sv-traffic">-<span class="stat-unit"> MB</span></div></div>
-        <div class="stat-card" style="animation-delay:.16s"><div class="stat-label" data-en="Inbounds" data-fa="اینباندها">Inbounds</div><div class="stat-val" id="sv-links">-</div></div>
-        <div class="stat-card" style="animation-delay:.24s"><div class="stat-label" data-en="Uptime" data-fa="آپتایم">Uptime</div><div class="stat-val" id="sv-uptime" style="font-size:15px">-</div></div>
-        <div class="stat-card" style="animation-delay:.32s"><div class="stat-label" data-en="Domain" data-fa="دامنه">Domain</div><div class="stat-val" id="sv-domain" style="font-size:10px;word-break:break-all;font-weight:500">-</div></div>
+        <div class="stat-card" style="animation-delay:.08s"><div class="stat-label" data-en="Traffic" data-fa="ترافیک">ترافیک</div><div class="stat-val" id="sv-traffic">-<span class="stat-unit"> مگابایت</span></div></div>
+        <div class="stat-card" style="animation-delay:.16s"><div class="stat-label" data-en="Inbounds" data-fa="اینباندها">اینباندها</div><div class="stat-val" id="sv-links">-</div></div>
+        <div class="stat-card" style="animation-delay:.24s"><div class="stat-label" data-en="Uptime" data-fa="آپتایم">آپتایم</div><div class="stat-val" id="sv-uptime" style="font-size:15px">-</div></div>
+        <div class="stat-card" style="animation-delay:.32s"><div class="stat-label" data-en="Domain" data-fa="دامنه">دامنه</div><div class="stat-val" id="sv-domain" style="font-size:10px;word-break:break-all;font-weight:500">-</div></div>
       </div>
       <div class="grid-2">
         <div class="card">
-          <div class="card-hd"><div class="card-title" data-en="CPU" data-fa="پردازنده">CPU</div><span id="cpu-v" style="font-size:17px;font-weight:700;color:var(--gold)">-%</span></div>
+          <div class="card-hd"><div class="card-title" data-en="CPU" data-fa="پردازنده">پردازنده</div><span id="cpu-v" style="font-size:17px;font-weight:700;color:var(--gold)">-%</span></div>
           <div class="sys-bar"><div class="sys-fill" id="cpu-b" style="background:var(--gold)"></div></div>
         </div>
         <div class="card">
-          <div class="card-hd"><div class="card-title" data-en="Memory" data-fa="حافظه">Memory</div><span id="mem-v" style="font-size:17px;font-weight:700;color:var(--green)">-%</span></div>
+          <div class="card-hd"><div class="card-title" data-en="Memory" data-fa="حافظه">حافظه</div><span id="mem-v" style="font-size:17px;font-weight:700;color:var(--green)">-%</span></div>
           <div class="sys-bar"><div class="sys-fill" id="mem-b" style="background:var(--green)"></div></div>
         </div>
       </div>
       <div class="card">
-        <div class="card-hd"><div class="card-title" data-en="Hourly Traffic" data-fa="ترافیک ساعتی">Hourly Traffic</div></div>
+        <div class="card-hd"><div class="card-title" data-en="Hourly Traffic" data-fa="ترافیک ساعتی">ترافیک ساعتی</div></div>
         <div class="chart-container"><canvas id="tc"></canvas></div>
       </div>
     </section>
@@ -3830,20 +4086,20 @@ body[dir="rtl"]{direction:rtl;text-align:right}
     <section class="page" id="page-inbounds">
       <div class="page-header">
         <div>
-          <div class="page-title" data-en="Inbounds" data-fa="اینباندها">Inbounds</div>
-          <div class="page-sub" data-en="VLESS over WebSocket · TLS" data-fa="VLESS روی WebSocket با TLS">VLESS over WebSocket · TLS</div>
+          <div class="page-title" data-en="Inbounds" data-fa="اینباندها">اینباندها</div>
+          <div class="page-sub" data-en="VLESS over WebSocket · TLS" data-fa="پروتکل VLESS روی WebSocket با TLS">پروتکل VLESS روی WebSocket با TLS</div>
         </div>
-        <button class="btn btn-gold" onclick="showAddMo()" data-en="+ Add" data-fa="+ افزودن">+ Add</button>
+        <button class="btn btn-gold" onclick="showAddMo()" data-en="+ Add" data-fa="+ افزودن">+ افزودن</button>
       </div>
       <div class="tb">
         <div class="search-wrap">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input id="srch" data-ph-en="Search name…" data-ph-fa="جستجوی نام…" placeholder="Search name…" oninput="filterLinks()">
+          <input id="srch" data-ph-en="Search name…" data-ph-fa="جستجوی نام…" placeholder="جستجوی نام…" dir="auto" oninput="filterLinks()">
         </div>
         <div class="filter-chips">
-          <button class="chip active" data-filter="all" onclick="setFilter('all',this)" data-en="All" data-fa="همه">All</button>
-          <button class="chip" data-filter="active" onclick="setFilter('active',this)" data-en="Active" data-fa="فعال">Active</button>
-          <button class="chip" data-filter="off" onclick="setFilter('off',this)" data-en="Off" data-fa="غیرفعال">Off</button>
+          <button class="chip active" data-filter="all" onclick="setFilter('all',this)" data-en="All" data-fa="همه">همه</button>
+          <button class="chip" data-filter="active" onclick="setFilter('active',this)" data-en="Active" data-fa="فعال">فعال</button>
+          <button class="chip" data-filter="off" onclick="setFilter('off',this)" data-en="Off" data-fa="غیرفعال">غیرفعال</button>
         </div>
       </div>
       <div class="card" style="padding:0;overflow:hidden">
@@ -3851,33 +4107,33 @@ body[dir="rtl"]{direction:rtl;text-align:right}
           <table class="tbl">
             <thead><tr>
               <th>#</th>
-              <th data-en="Name" data-fa="نام">Name</th>
-              <th data-en="Type" data-fa="نوع">Type</th>
-              <th data-en="Usage" data-fa="مصرف">Usage</th>
-              <th data-en="IPs" data-fa="آی‌پی">IPs</th>
-              <th data-en="Expiry" data-fa="انقضا">Expiry</th>
-              <th data-en="Status" data-fa="وضعیت">Status</th>
-              <th data-en="Actions" data-fa="عملیات">Actions</th>
+              <th data-en="Name" data-fa="نام">نام</th>
+              <th data-en="Type" data-fa="نوع">نوع</th>
+              <th data-en="Usage" data-fa="مصرف">مصرف</th>
+              <th data-en="IPs" data-fa="آی‌پی">آی‌پی</th>
+              <th data-en="Expiry" data-fa="انقضا">انقضا</th>
+              <th data-en="Status" data-fa="وضعیت">وضعیت</th>
+              <th data-en="Actions" data-fa="عملیات">عملیات</th>
             </tr></thead>
             <tbody id="ltb"></tbody>
           </table>
         </div>
         <div class="m-cards" id="mcards"></div>
-        <div class="empty" id="lempty" style="display:none" data-en="No inbounds found" data-fa="هیچ اینباندی یافت نشد">No inbounds found</div>
+        <div class="empty" id="lempty" style="display:none" data-en="No inbounds found" data-fa="هیچ اینباندی یافت نشد">هیچ اینباندی یافت نشد</div>
       </div>
     </section>
 
     <!-- Traffic -->
     <section class="page" id="page-traffic">
-      <div class="page-header"><div><div class="page-title" data-en="Traffic" data-fa="ترافیک">Traffic</div><div class="page-sub" data-en="Statistics & Inbound comparison" data-fa="آمار و مقایسه مصرف کاربران">Statistics & Inbound comparison</div></div></div>
+      <div class="page-header"><div><div class="page-title" data-en="Traffic" data-fa="ترافیک">ترافیک</div><div class="page-sub" data-en="Statistics & Inbound comparison" data-fa="آمار و مقایسه مصرف کاربران">آمار و مقایسه مصرف کاربران</div></div></div>
       <div class="grid-2" style="margin-bottom:14px">
         <div class="card">
-          <div class="sl-item"><span class="sl-k" data-en="Total Traffic" data-fa="کل ترافیک">Total Traffic</span><span class="sl-v" id="t-tr">-</span></div>
-          <div class="sl-item"><span class="sl-k" data-en="Total Requests" data-fa="کل درخواست‌ها">Total Requests</span><span class="sl-v" id="t-rq">-</span></div>
-          <div class="sl-item"><span class="sl-k" data-en="Uptime" data-fa="آپتایم">Uptime</span><span class="sl-v" id="t-up">-</span></div>
+          <div class="sl-item"><span class="sl-k" data-en="Total Traffic" data-fa="کل ترافیک">کل ترافیک</span><span class="sl-v" id="t-tr">-</span></div>
+          <div class="sl-item"><span class="sl-k" data-en="Total Requests" data-fa="کل درخواست‌ها">کل درخواست‌ها</span><span class="sl-v" id="t-rq">-</span></div>
+          <div class="sl-item"><span class="sl-k" data-en="Uptime" data-fa="آپتایم">آپتایم</span><span class="sl-v" id="t-up">-</span></div>
         </div>
         <div class="card">
-          <div class="card-hd"><div class="card-title" data-en="Inbound Traffic Share" data-fa="سهم ترافیک کاربران">Inbound Traffic Share</div></div>
+          <div class="card-hd"><div class="card-title" data-en="Inbound Traffic Share" data-fa="سهم ترافیک کاربران">سهم ترافیک کاربران</div></div>
           <div class="chart-container"><canvas id="inbound-chart"></canvas></div>
         </div>
       </div>
@@ -3886,15 +4142,15 @@ body[dir="rtl"]{direction:rtl;text-align:right}
     <!-- Notifications -->
     <section class="page" id="page-notifications">
       <div class="page-header">
-        <div><div class="page-title" data-en="Notifications" data-fa="اعلانات">Notifications</div><div class="page-sub" data-en="Updates, alerts & system messages" data-fa="بروزرسانی‌ها، هشدارها و پیام‌های سیستم">Updates, alerts & system messages</div></div>
+        <div><div class="page-title" data-en="Notifications" data-fa="اعلانات">اعلانات</div><div class="page-sub" data-en="Updates, alerts & system messages" data-fa="بروزرسانی‌ها، هشدارها و پیام‌های سیستم">بروزرسانی‌ها، هشدارها و پیام‌های سیستم</div></div>
         <div style="display:flex;gap:6px">
-          <button class="btn btn-ghost btn-sm" onclick="markAllSeen()" data-en="Mark all read" data-fa="خوانده شدن همه">Mark all read</button>
-          <button class="btn btn-danger btn-sm" onclick="clearNotifs()" data-en="Clear all" data-fa="حذف همه">Clear all</button>
+          <button class="btn btn-ghost btn-sm" onclick="markAllSeen()" data-en="Mark all read" data-fa="خوانده شدن همه">خوانده شدن همه</button>
+          <button class="btn btn-danger btn-sm" onclick="clearNotifs()" data-en="Clear all" data-fa="حذف همه">حذف همه</button>
         </div>
       </div>
       <div class="card" style="padding:0;overflow:hidden">
         <div id="notif-list" style="padding:4px 0">
-          <div class="empty" data-en="No notifications" data-fa="هیچ اعلانی وجود ندارد">No notifications</div>
+          <div class="empty" data-en="No notifications" data-fa="هیچ اعلانی وجود ندارد">هیچ اعلانی وجود ندارد</div>
         </div>
       </div>
     </section>
@@ -3902,66 +4158,64 @@ body[dir="rtl"]{direction:rtl;text-align:right}
     <!-- Clean IP -->
     <section class="page" id="page-addresses">
       <div class="page-header">
-        <div><div class="page-title" data-en="Clean IP" data-fa="آی‌پی تمیز">Clean IP</div><div class="page-sub" data-en="Subscription alternative addresses" data-fa="آدرس‌های جایگزین اشتراک">Subscription alternative addresses</div></div>
+        <div><div class="page-title" data-en="Clean IP" data-fa="آی‌پی تمیز">آی‌پی تمیز</div><div class="page-sub" data-en="Subscription alternative addresses" data-fa="آدرس‌های جایگزین اشتراک">آدرس‌های جایگزین اشتراک</div></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn btn-ghost" onclick="importAddrs('railway')" data-en="🚄 Railway IP" data-fa="🚄 آی‌پی ریلوی">🚄 Railway IP</button>
-          <button class="btn btn-danger" onclick="delAllAddrs()" data-en="Delete All" data-fa="پاک کردن همه">Delete All</button>
-          <button class="btn btn-gold" onclick="showAddAddrMo()" data-en="+ Add" data-fa="+ افزودن">+ Add</button>
+          <button class="btn btn-ghost" onclick="importAddrs('railway')" data-en="🚄 Railway IP" data-fa="🚄 آی‌پی ریلوی">🚄 آی‌پی ریلوی</button>
+          <button class="btn btn-danger" onclick="delAllAddrs()" data-en="Delete All" data-fa="پاک کردن همه">پاک کردن همه</button>
+          <button class="btn btn-gold" onclick="showAddAddrMo()" data-en="+ Add" data-fa="+ افزودن">+ افزودن</button>
         </div>
       </div>
       <div class="card">
-        <div style="font-size:12px;color:var(--text3);margin-bottom:12px" data-en="Add your own clean IPs or import from Railway/Cloudflare" data-fa="آی‌پی‌های تمیز خودت رو اضافه کن یا از Railway/Cloudflare ایمپورت کن">Add your own clean IPs or import from Railway/Cloudflare</div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:12px" data-en="Add your own clean IPs or import from Railway/Cloudflare" data-fa="آی‌پی‌های تمیز خودت رو اضافه کن یا از Railway/Cloudflare ایمپورت کن">آی‌پی‌های تمیز خودت رو اضافه کن یا از Railway/Cloudflare ایمپورت کن</div>
         <div id="addr-list"></div>
       </div>
     </section>
 
     <!-- Security & Settings -->
     <section class="page" id="page-security">
-      <div class="page-header"><div><div class="page-title" data-en="Security & Settings" data-fa="امنیت و تنظیمات">Security & Settings</div><div class="page-sub" data-en="Settings, Password & Live logs" data-fa="تنظیمات، تغییر رمز پنل و لاگ‌های زنده">Settings, Password & Live logs</div></div></div>
+      <div class="page-header"><div><div class="page-title" data-en="Security & Settings" data-fa="امنیت و تنظیمات">امنیت و تنظیمات</div><div class="page-sub" data-en="Settings, Password & Live logs" data-fa="تنظیمات، تغییر رمز پنل و لاگ‌های زنده">تنظیمات، تغییر رمز پنل و لاگ‌های زنده</div></div></div>
       <div class="grid-2">
         <div class="card">
-          <div class="card-hd"><div class="card-title" data-en="Telegram Bot Settings" data-fa="تنظیمات ربات تلگرام">Telegram Bot Settings</div></div>
-          <div class="fg"><label class="fl" data-en="Bot Token" data-fa="توکن ربات">Bot Token</label><input class="fi" type="text" id="tg-token" placeholder="123456:ABC-DEF..."></div>
-          <div class="fg"><label class="fl" data-en="Admin Chat ID" data-fa="شناسه ادمین">Admin Chat ID</label><input class="fi" type="text" id="tg-admin-id" placeholder="987654321"></div>
-          <button class="btn btn-gold" onclick="saveSettings()" style="margin-top:10px;width:100%;justify-content:center" data-en="Save & Restart Bot" data-fa="ذخیره و ریستارت ربات">Save & Restart Bot</button>
+          <div class="card-hd"><div class="card-title" data-en="Telegram Bot Settings" data-fa="تنظیمات ربات تلگرام">تنظیمات ربات تلگرام</div></div>
+          <div class="fg"><label class="fl" data-en="Bot Token" data-fa="توکن ربات">توکن ربات</label><input class="fi" type="text" id="tg-token" placeholder="123456:ABC-DEF..." dir="ltr" style="text-align:left"></div>
+          <div class="fg"><label class="fl" data-en="Admin Chat ID" data-fa="شناسه ادمین">شناسه ادمین</label><input class="fi" type="text" id="tg-admin-id" placeholder="987654321" dir="ltr" style="text-align:left"></div>
+          <button class="btn btn-gold" onclick="saveSettings()" style="margin-top:10px;width:100%;justify-content:center" data-en="Save & Restart Bot" data-fa="ذخیره و ریستارت ربات">ذخیره و ریستارت ربات</button>
         </div>
         <div class="card">
-          <div class="card-hd"><div class="card-title" data-en="Change Password" data-fa="تغییر رمز عبور">Change Password</div></div>
-          <div class="fg"><label class="fl" data-en="Current Password" data-fa="رمز فعلی">Current Password</label><input class="fi" type="password" id="cpw" placeholder="Current password"></div>
-          <div class="fg"><label class="fl" data-en="New Password" data-fa="رمز جدید">New Password</label><input class="fi" type="password" id="npw" placeholder="Min 4 chars"></div>
-          <button class="btn btn-gold" onclick="chgPw()" style="margin-top:10px;width:100%;justify-content:center" data-en="Update Password" data-fa="بروزرسانی رمز">Update Password</button>
+          <div class="card-hd"><div class="card-title" data-en="Change Password" data-fa="تغییر رمز عبور">تغییر رمز عبور</div></div>
+          <div class="fg"><label class="fl" data-en="Current Password" data-fa="رمز فعلی">رمز فعلی</label><input class="fi" type="password" id="cpw" data-ph-en="Current password" data-ph-fa="رمز عبور فعلی" placeholder="رمز عبور فعلی"></div>
+          <div class="fg"><label class="fl" data-en="New Password" data-fa="رمز جدید">رمز جدید</label><input class="fi" type="password" id="npw" data-ph-en="Min 4 chars" data-ph-fa="حداقل ۴ کاراکتر" placeholder="حداقل ۴ کاراکتر"></div>
+          <button class="btn btn-gold" onclick="chgPw()" style="margin-top:10px;width:100%;justify-content:center" data-en="Update Password" data-fa="بروزرسانی رمز">بروزرسانی رمز</button>
         </div>
       </div>
       <div class="card" style="margin-top:14px">
-        <div class="card-hd"><div class="card-title" data-en="Live Logs" data-fa="لاگ‌های زنده">Live Logs</div></div>
-        <div class="live-logs-container" id="log-container">Connecting to live logs...</div>
+        <div class="card-hd"><div class="card-title" data-en="Live Logs" data-fa="لاگ‌های زنده">لاگ‌های زنده</div></div>
+        <div class="live-logs-container" id="log-container" data-en="Connecting to live logs..." data-fa="در حال اتصال به لاگ‌های زنده…">در حال اتصال به لاگ‌های زنده…</div>
       </div>
     </section>
 
     <!-- Settings -->
     <section class="page" id="page-settings">
-      <div class="page-header"><div><div class="page-title" data-en="Settings" data-fa="تنظیمات">Settings</div><div class="page-sub" data-en="Railway Permanent Database & Preferences" data-fa="دیتابیس دائمی Railway و تنظیمات">Railway Permanent Database & Preferences</div></div></div>
+      <div class="page-header"><div><div class="page-title" data-en="Settings" data-fa="تنظیمات">تنظیمات</div><div class="page-sub" data-en="Railway Permanent Database & Preferences" data-fa="دیتابیس دائمی Railway و تنظیمات">دیتابیس دائمی Railway و تنظیمات</div></div></div>
 
       <!-- Permanent Database -->
       <div class="card" style="border:1px solid rgba(129,140,248,0.25)">
         <div class="card-hd">
-          <div class="card-title" style="color:#818cf8">💾 <span data-en="Permanent Database" data-fa="دیتابیس دائمی">Permanent Database</span></div>
+          <div class="card-title" style="color:#818cf8">💾 <span data-en="Permanent Database" data-fa="دیتابیس دائمی">دیتابیس دائمی</span></div>
           <span id="rdb-status" style="font-size:11px;color:var(--text3)">-</span>
         </div>
-        <div style="font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.5" data-en="Connect to Railway, select a project and ensure a persistent volume at /data exists for permanent storage." data-fa="به Railway متصل شوید، یک پروژه انتخاب کنید و مطمئن شوید یک volume پایدار در مسیر /data وجود دارد.">
-          Connect to Railway, select a project and ensure a persistent volume at /data exists for permanent storage.
-        </div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.5" data-en="Connect to Railway, select a project and ensure a persistent volume at /data exists for permanent storage." data-fa="به Railway متصل شوید، یک پروژه انتخاب کنید و مطمئن شوید یک volume پایدار در مسیر /data وجود دارد.">به Railway متصل شوید، یک پروژه انتخاب کنید و مطمئن شوید یک volume پایدار در مسیر /data وجود دارد.</div>
         <div class="fg">
-          <label class="fl" data-en="Railway Token" data-fa="توکن Railway">Railway Token</label>
+          <label class="fl" data-en="Railway Token" data-fa="توکن Railway">توکن Railway</label>
           <div style="display:flex;gap:8px">
-            <input class="fi" type="password" id="rw-token" placeholder="rly_..." style="flex:1">
-            <button class="btn btn-ghost btn-sm" onclick="fetchRailwayProjects()" id="rw-fetch-btn" data-en="Fetch" data-fa="دریافت">Fetch</button>
+            <input class="fi" type="password" id="rw-token" placeholder="rly_..." style="flex:1" dir="ltr" >
+            <button class="btn btn-ghost btn-sm" onclick="fetchRailwayProjects()" id="rw-fetch-btn" data-en="Fetch" data-fa="دریافت">دریافت</button>
           </div>
         </div>
         <div class="fg">
-          <label class="fl" data-en="Project" data-fa="پروژه">Project</label>
+          <label class="fl" data-en="Project" data-fa="پروژه">پروژه</label>
           <select class="fs" id="rw-project" disabled>
-            <option value="" data-en="-- Select a project --" data-fa="-- پروژه را انتخاب کنید --">-- Select a project --</option>
+            <option value="" data-en="-- Select a project --" data-fa="-- پروژه را انتخاب کنید --">-- پروژه را انتخاب کنید --</option>
           </select>
         </div>
         <div class="fg" id="rw-volume-info" style="display:none">
@@ -3971,21 +4225,21 @@ body[dir="rtl"]{direction:rtl;text-align:right}
               <div id="rw-volume-title" style="font-weight:600;font-size:13px">-</div>
               <div id="rw-volume-desc" style="font-size:11px;color:var(--text3);margin-top:2px">-</div>
             </div>
-            <button class="btn btn-gold btn-sm" id="rw-create-btn" style="margin-left:auto;display:none" onclick="createRailwayVolume()" data-en="Create Volume" data-fa="ایجاد Volume">Create Volume</button>
+            <button class="btn btn-gold btn-sm" id="rw-create-btn" style="margin-left:auto;display:none" onclick="createRailwayVolume()" data-en="Create Volume" data-fa="ساخت فضای ذخیره‌سازی">ساخت فضای ذخیره‌سازی</button>
           </div>
         </div>
       </div>
 
       <!-- Bot Settings (moved here too) -->
       <div class="card">
-        <div class="card-hd"><div class="card-title" data-en="Telegram Bot" data-fa="ربات تلگرام">Telegram Bot</div></div>
-        <div class="fg"><label class="fl" data-en="Bot Token" data-fa="توکن ربات">Bot Token</label><input class="fi" type="text" id="rw-tg-token" placeholder="123456:ABC-DEF..."></div>
-        <div class="fg"><label class="fl" data-en="Admin Chat ID" data-fa="شناسه ادمین">Admin Chat ID</label><input class="fi" type="text" id="rw-tg-admin" placeholder="987654321"></div>
+        <div class="card-hd"><div class="card-title" data-en="Telegram Bot" data-fa="ربات تلگرام">ربات تلگرام</div></div>
+        <div class="fg"><label class="fl" data-en="Bot Token" data-fa="توکن ربات">توکن ربات</label><input class="fi" type="text" id="rw-tg-token" placeholder="123456:ABC-DEF..." dir="ltr" style="text-align:left"></div>
+        <div class="fg"><label class="fl" data-en="Admin Chat ID" data-fa="شناسه ادمین">شناسه ادمین</label><input class="fi" type="text" id="rw-tg-admin" placeholder="987654321" dir="ltr" style="text-align:left"></div>
         <div class="fg" style="display:flex;align-items:center;gap:8px;margin-top:4px">
           <input type="checkbox" id="rw-tg-notify-conn" style="width:16px;height:16px;accent-color:var(--gold)">
-          <label for="rw-tg-notify-conn" style="font-size:12px;cursor:pointer" data-en="Notify on every connect / disconnect" data-fa="اعلان هر ورود و خروج (اتصال و قطع اتصال) کاربران">Notify on every connect / disconnect</label>
+          <label for="rw-tg-notify-conn" style="font-size:12px;cursor:pointer" data-en="Notify on every connect / disconnect" data-fa="اعلان هر ورود و خروج (اتصال و قطع اتصال) کاربران">اعلان هر ورود و خروج (اتصال و قطع اتصال) کاربران</label>
         </div>
-        <button class="btn btn-gold" onclick="saveAllSettings()" style="margin-top:10px;width:100%;justify-content:center" data-en="Save All Settings" data-fa="ذخیره همه تنظیمات">Save All Settings</button>
+        <button class="btn btn-gold" onclick="saveAllSettings()" style="margin-top:10px;width:100%;justify-content:center" data-en="Save All Settings" data-fa="ذخیره همه تنظیمات">ذخیره همه تنظیمات</button>
       </div>
     </section>
 
@@ -3996,14 +4250,14 @@ body[dir="rtl"]{direction:rtl;text-align:right}
 <div class="mo" id="mo-add" onclick="if(event.target===this)this.classList.remove('show')">
   <div class="mo-box">
     <button class="mo-close" onclick="document.getElementById('mo-add').classList.remove('show')">✕</button>
-    <div class="mo-title" data-en="ADD INBOUND" data-fa="افزودن اینباند">ADD INBOUND</div>
-    <div class="fg"><label class="fl" data-en="Remark" data-fa="توضیح">Remark</label><input class="fi" id="nl" data-ph-en="e.g. User 1" data-ph-fa="مثلاً کاربر ۱" placeholder="e.g. User 1"></div>
+    <div class="mo-title" data-en="ADD INBOUND" data-fa="افزودن اینباند">افزودن اینباند</div>
+    <div class="fg"><label class="fl" data-en="Remark" data-fa="توضیح">توضیح</label><input class="fi" id="nl" data-ph-en="e.g. User 1" data-ph-fa="مثلاً کاربر ۱" placeholder="مثلاً کاربر ۱" dir="ltr" style="text-align:right"></div>
     <div class="fr">
-      <div class="fg"><label class="fl" data-en="Traffic Limit" data-fa="محدودیت ترافیک">Traffic Limit</label><input class="fi" id="nv" type="number" min="0" step=".1" placeholder="0 = ∞"></div>
-      <div class="fg" style="max-width:100px"><label class="fl" data-en="Unit" data-fa="واحد">Unit</label><select class="fs" id="nu"><option>GB</option></select></div>
+      <div class="fg"><label class="fl" data-en="Traffic Limit" data-fa="محدودیت ترافیک">محدودیت ترافیک</label><input class="fi" id="nv" type="number" min="0" step=".1" data-ph-en="0 = unlimited" data-ph-fa="۰ = نامحدود" placeholder="۰ = نامحدود"></div>
+      <div class="fg" style="max-width:130px"><label class="fl" data-en="Unit" data-fa="واحد">واحد</label><select class="fs" id="nu"><option value="GB">گیگابایت</option><option value="MB">مگابایت</option></select></div>
     </div>
-    <div class="fg"><label class="fl" data-en="Max IPs" data-fa="حداکثر آی‌پی">Max IPs</label><input class="fi" id="nc" type="number" min="0" placeholder="0 = ∞"></div>
-    <div class="fg"><label class="fl" data-en="Days Valid" data-fa="روزهای اعتبار">Days Valid</label><input class="fi" id="nd" type="number" min="0" placeholder="0 = No expiry"></div>
+    <div class="fg"><label class="fl" data-en="Max IPs" data-fa="حداکثر آی‌پی">حداکثر آی‌پی</label><input class="fi" id="nc" type="number" min="0" data-ph-en="0 = unlimited" data-ph-fa="۰ = نامحدود" placeholder="۰ = نامحدود"></div>
+    <div class="fg"><label class="fl" data-en="Days Valid" data-fa="روزهای اعتبار">روزهای اعتبار</label><input class="fi" id="nd" type="number" min="0" data-ph-en="0 = no expiry" data-ph-fa="۰ = بدون انقضا" placeholder="۰ = بدون انقضا"></div>
     <div class="fg" style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-top:4px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         <input type="checkbox" id="n_vless_enabled" checked style="width:16px;height:16px;accent-color:var(--gold)" onchange="toggleVariantBox('n','vless')">
@@ -4012,7 +4266,7 @@ body[dir="rtl"]{direction:rtl;text-align:right}
       <div id="n_vless_box">
         <div class="fr">
           <div class="fg">
-            <label class="fl" data-en="Transport" data-fa="ترابرد">Transport</label>
+            <label class="fl" data-en="Transport" data-fa="ترابرد">ترابرد</label>
             <select class="fs" id="n_vless_transport" onchange="syncAlpnDefault('vless','n_vless_transport','n_vless_alpn')">
               <option value="ws">WebSocket</option>
               <option value="xhttp-packet-up">XHTTP (packet-up)</option>
@@ -4020,7 +4274,7 @@ body[dir="rtl"]{direction:rtl;text-align:right}
             </select>
           </div>
           <div class="fg">
-            <label class="fl" data-en="Fingerprint" data-fa="فینگرپرینت">Fingerprint</label>
+            <label class="fl" data-en="Fingerprint" data-fa="فینگرپرینت">فینگرپرینت</label>
             <select class="fs" id="n_vless_fp">
               <option value="chrome">chrome</option><option value="firefox">firefox</option><option value="safari">safari</option>
               <option value="ios">ios</option><option value="android">android</option><option value="edge">edge</option>
@@ -4045,7 +4299,7 @@ body[dir="rtl"]{direction:rtl;text-align:right}
       <div id="n_trojan_box" style="display:none">
         <div class="fr">
           <div class="fg">
-            <label class="fl" data-en="Transport" data-fa="ترابرد">Transport</label>
+            <label class="fl" data-en="Transport" data-fa="ترابرد">ترابرد</label>
             <select class="fs" id="n_trojan_transport" onchange="syncAlpnDefault('trojan','n_trojan_transport','n_trojan_alpn')">
               <option value="ws">WebSocket</option>
               <option value="xhttp-packet-up">XHTTP (packet-up)</option>
@@ -4053,7 +4307,7 @@ body[dir="rtl"]{direction:rtl;text-align:right}
             </select>
           </div>
           <div class="fg">
-            <label class="fl" data-en="Fingerprint" data-fa="فینگرپرینت">Fingerprint</label>
+            <label class="fl" data-en="Fingerprint" data-fa="فینگرپرینت">فینگرپرینت</label>
             <select class="fs" id="n_trojan_fp">
               <option value="chrome">chrome</option><option value="firefox">firefox</option><option value="safari">safari</option>
               <option value="ios">ios</option><option value="android">android</option><option value="edge">edge</option>
@@ -4071,25 +4325,25 @@ body[dir="rtl"]{direction:rtl;text-align:right}
       </div>
     </div>
     <div class="fg" style="opacity:.6">
-      <label class="fl" data-en="Port" data-fa="پورت">Port</label>
+      <label class="fl" data-en="Port" data-fa="پورت">پورت</label>
       <input class="fi" value="443" readonly style="cursor:not-allowed">
     </div>
-    <button class="btn btn-gold" onclick="createLink()" style="width:100%;justify-content:center;margin-top:12px;padding:12px" data-en="CREATE" data-fa="ایجاد">CREATE</button>
+    <button class="btn btn-gold" onclick="createLink()" style="width:100%;justify-content:center;margin-top:12px;padding:12px" data-en="CREATE" data-fa="ایجاد">ایجاد</button>
   </div>
 </div>
 
 <div class="mo" id="mo-edit" onclick="if(event.target===this)this.classList.remove('show')">
   <div class="mo-box">
     <button class="mo-close" onclick="document.getElementById('mo-edit').classList.remove('show')">✕</button>
-    <div class="mo-title" id="et">EDIT INBOUND</div>
+    <div class="mo-title" id="et" data-en="EDIT INBOUND" data-fa="ویرایش اینباند">ویرایش اینباند</div>
     <input type="hidden" id="eu">
-    <div class="fg"><label class="fl" data-en="Name" data-fa="نام">Name</label><input class="fi" id="en2" readonly style="opacity:.5;cursor:not-allowed"></div>
+    <div class="fg"><label class="fl" data-en="Name" data-fa="نام">نام</label><input class="fi" id="en2" readonly dir="ltr" style="opacity:.5;cursor:not-allowed;text-align:right"></div>
     <div class="fr">
-      <div class="fg"><label class="fl" data-en="Traffic Limit" data-fa="محدودیت ترافیک">Traffic Limit</label><input class="fi" id="el" type="number" min="0" step=".1" placeholder="0 = ∞"></div>
-      <div class="fg" style="max-width:100px"><label class="fl" data-en="Unit" data-fa="واحد">Unit</label><select class="fs" id="eu2"><option>GB</option></select></div>
+      <div class="fg"><label class="fl" data-en="Traffic Limit" data-fa="محدودیت ترافیک">محدودیت ترافیک</label><input class="fi" id="el" type="number" min="0" step=".1" data-ph-en="0 = unlimited" data-ph-fa="۰ = نامحدود" placeholder="۰ = نامحدود"></div>
+      <div class="fg" style="max-width:130px"><label class="fl" data-en="Unit" data-fa="واحد">واحد</label><select class="fs" id="eu2"><option value="GB">گیگابایت</option><option value="MB">مگابایت</option></select></div>
     </div>
-    <div class="fg"><label class="fl" data-en="Max IPs" data-fa="حداکثر آی‌پی">Max IPs</label><input class="fi" id="ec" type="number" min="0" placeholder="0 = ∞"></div>
-    <div class="fg"><label class="fl" data-en="Extend Days" data-fa="افزایش روزها">Extend Days</label><input class="fi" id="ed" type="number" min="0" placeholder="0 = no change"></div>
+    <div class="fg"><label class="fl" data-en="Max IPs" data-fa="حداکثر آی‌پی">حداکثر آی‌پی</label><input class="fi" id="ec" type="number" min="0" data-ph-en="0 = unlimited" data-ph-fa="۰ = نامحدود" placeholder="۰ = نامحدود"></div>
+    <div class="fg"><label class="fl" data-en="Extend Days" data-fa="افزایش روزها">افزایش روزها</label><input class="fi" id="ed" type="number" min="0" data-ph-en="0 = no change" data-ph-fa="۰ = بدون تغییر" placeholder="۰ = بدون تغییر"></div>
     <div class="fg" style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-top:4px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         <input type="checkbox" id="e_vless_enabled" style="width:16px;height:16px;accent-color:var(--gold)" onchange="toggleVariantBox('e','vless')">
@@ -4098,7 +4352,7 @@ body[dir="rtl"]{direction:rtl;text-align:right}
       <div id="e_vless_box">
         <div class="fr">
           <div class="fg">
-            <label class="fl" data-en="Transport" data-fa="ترابرد">Transport</label>
+            <label class="fl" data-en="Transport" data-fa="ترابرد">ترابرد</label>
             <select class="fs" id="e_vless_transport" onchange="syncAlpnDefault('vless','e_vless_transport','e_vless_alpn')">
               <option value="ws">WebSocket</option>
               <option value="xhttp-packet-up">XHTTP (packet-up)</option>
@@ -4106,7 +4360,7 @@ body[dir="rtl"]{direction:rtl;text-align:right}
             </select>
           </div>
           <div class="fg">
-            <label class="fl" data-en="Fingerprint" data-fa="فینگرپرینت">Fingerprint</label>
+            <label class="fl" data-en="Fingerprint" data-fa="فینگرپرینت">فینگرپرینت</label>
             <select class="fs" id="e_vless_fp">
               <option value="chrome">chrome</option><option value="firefox">firefox</option><option value="safari">safari</option>
               <option value="ios">ios</option><option value="android">android</option><option value="edge">edge</option>
@@ -4131,7 +4385,7 @@ body[dir="rtl"]{direction:rtl;text-align:right}
       <div id="e_trojan_box" style="display:none">
         <div class="fr">
           <div class="fg">
-            <label class="fl" data-en="Transport" data-fa="ترابرد">Transport</label>
+            <label class="fl" data-en="Transport" data-fa="ترابرد">ترابرد</label>
             <select class="fs" id="e_trojan_transport" onchange="syncAlpnDefault('trojan','e_trojan_transport','e_trojan_alpn')">
               <option value="ws">WebSocket</option>
               <option value="xhttp-packet-up">XHTTP (packet-up)</option>
@@ -4139,7 +4393,7 @@ body[dir="rtl"]{direction:rtl;text-align:right}
             </select>
           </div>
           <div class="fg">
-            <label class="fl" data-en="Fingerprint" data-fa="فینگرپرینت">Fingerprint</label>
+            <label class="fl" data-en="Fingerprint" data-fa="فینگرپرینت">فینگرپرینت</label>
             <select class="fs" id="e_trojan_fp">
               <option value="chrome">chrome</option><option value="firefox">firefox</option><option value="safari">safari</option>
               <option value="ios">ios</option><option value="android">android</option><option value="edge">edge</option>
@@ -4157,12 +4411,12 @@ body[dir="rtl"]{direction:rtl;text-align:right}
       </div>
     </div>
     <div class="fg" style="opacity:.6">
-      <label class="fl" data-en="Port" data-fa="پورت">Port</label>
+      <label class="fl" data-en="Port" data-fa="پورت">پورت</label>
       <input class="fi" value="443" readonly style="cursor:not-allowed">
     </div>
     <div style="display:flex;gap:10px;margin-top:16px">
-      <button class="btn btn-gold" onclick="saveEdit()" style="flex:1;justify-content:center;padding:12px" data-en="SAVE" data-fa="ذخیره">SAVE</button>
-      <button class="btn btn-danger" onclick="resetTraf()" style="padding:12px" data-en="Reset" data-fa="بازنشانی">Reset</button>
+      <button class="btn btn-gold" onclick="saveEdit()" style="flex:1;justify-content:center;padding:12px" data-en="SAVE" data-fa="ذخیره">ذخیره</button>
+      <button class="btn btn-danger" onclick="resetTraf()" style="padding:12px" data-en="Reset" data-fa="بازنشانی">بازنشانی</button>
     </div>
   </div>
 </div>
@@ -4170,11 +4424,11 @@ body[dir="rtl"]{direction:rtl;text-align:right}
 <div class="mo" id="mo-qr" onclick="if(event.target===this)this.classList.remove('show')">
   <div class="mo-box" style="max-width:340px">
     <button class="mo-close" onclick="document.getElementById('mo-qr').classList.remove('show')">✕</button>
-    <div class="mo-title" data-en="QR CODE" data-fa="کد QR">QR CODE</div>
+    <div class="mo-title" data-en="QR CODE" data-fa="کد QR">کد QR</div>
     <div class="qr-box"><img id="qr-img" src="" alt="QR"></div>
     <div style="display:flex;gap:10px;margin-top:16px;justify-content:center">
-      <button class="btn btn-gold btn-sm" onclick="dlQR()" style="padding:10px 16px" data-en="Download" data-fa="دانلود">Download</button>
-      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('mo-qr').classList.remove('show')" style="padding:10px 16px" data-en="Close" data-fa="بستن">Close</button>
+      <button class="btn btn-gold btn-sm" onclick="dlQR()" style="padding:10px 16px" data-en="Download" data-fa="دانلود">دانلود</button>
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('mo-qr').classList.remove('show')" style="padding:10px 16px" data-en="Close" data-fa="بستن">بستن</button>
     </div>
   </div>
 </div>
@@ -4182,9 +4436,9 @@ body[dir="rtl"]{direction:rtl;text-align:right}
 <div class="mo" id="mo-addr" onclick="if(event.target===this)this.classList.remove('show')">
   <div class="mo-box">
     <button class="mo-close" onclick="document.getElementById('mo-addr').classList.remove('show')">✕</button>
-    <div class="mo-title" data-en="ADD CLEAN IP" data-fa="افزودن آی‌پی تمیز">ADD CLEAN IP</div>
-    <div class="fg"><label class="fl" data-en="IPs / Domains (one per line)" data-fa="آی‌پی‌ها (هر خط یک)">IPs / Domains</label><textarea class="fi" id="na" rows="5" placeholder="8.8.8.8&#10;example.com" style="resize:vertical;font-family:monospace"></textarea></div>
-    <button class="btn btn-gold" onclick="addAddrs()" style="width:100%;justify-content:center;margin-top:12px;padding:12px" data-en="ADD ALL" data-fa="افزودن همه">ADD ALL</button>
+    <div class="mo-title" data-en="ADD CLEAN IP" data-fa="افزودن آی‌پی تمیز">افزودن آی‌پی تمیز</div>
+    <div class="fg"><label class="fl" data-en="IPs / Domains (one per line)" data-fa="آی‌پی‌ها (هر خط یک)">آی‌پی‌ها (هر خط یک)</label><textarea class="fi" id="na" rows="5" placeholder="8.8.8.8&#10;example.com" style="resize:vertical;font-family:monospace" dir="ltr"></textarea></div>
+    <button class="btn btn-gold" onclick="addAddrs()" style="width:100%;justify-content:center;margin-top:12px;padding:12px" data-en="ADD ALL" data-fa="افزودن همه">افزودن همه</button>
   </div>
 </div>
 
@@ -4200,13 +4454,116 @@ function protoBadge(variants){
   return on.length?on.join('+'):'VLESS';
 }
 
-const langMap={
-  en:{edit:'Edit',copy:'Copy',sub:'Sub',qr:'QR',del:'Del',gh:'View on GitHub'},
-  fa:{edit:'ویرایش',copy:'کپی',sub:'اشتراک',qr:'QR',del:'حذف',gh:'مشاهده در گیت‌هاب'}
+/* ── واژه‌نامه‌ی رابط کاربری (پیش‌فرض: فارسی) ───────────────────────────── */
+const I18N={
+ en:{
+  edit:'Edit',copy:'Copy',sub:'Sub',qr:'QR',del:'Del',gh:'View on GitHub',
+  status_on:'On',status_off:'Off',expired:'Expired',unlimited:'∞',
+  unit_b:'B',unit_kb:'KB',unit_mb:'MB',unit_gb:'GB',ips:'IPs',
+  fmt_days:'{n}d',fmt_hours:'{n}h',fmt_minutes:'{n}m',
+  no_inbounds:'No inbounds found',edit_prefix:'EDIT: ',
+  new_inbound:'New Link',only_english:'Only English letters allowed',
+  need_protocol:'Enable at least one protocol (VLESS or Trojan)',
+  created:'Created',create_err:'Error creating link',updated:'Updated',update_err:'Error updating',
+  toggle_fail:'Failed to toggle',
+  confirm_reset:'Reset traffic for this inbound?',reset_ok:'Traffic reset',reset_err:'Error resetting',
+  confirm_del:'Delete this inbound?',deleted:'Deleted',delete_err:'Error deleting',
+  no_link:'No link to copy',no_qr:'No QR data',copied:'Copied!',copy_fail:'Failed to copy',sub_copied:'Sub URL copied!',
+  fill_all:'Fill all fields',pw_short:'Password must be at least 4 characters',pw_ok:'Password updated',
+  bot_saved:'Bot settings saved & restarted',settings_saved:'All settings saved',
+  save_fail:'Failed to save settings',save_err:'Error saving settings',
+  loading:'Loading...',select_project:'-- Select a project --',err_loading:'Error loading',
+  found_projects:'Found {n} project(s)',fetch_fail:'Failed to fetch projects',
+  rw_token_first:'Enter your Railway token first',rw_project_first:'Select a project first',
+  checking:'Checking...',vol_exists:'Volume at /data exists!',vol_created:'Volume at /data created!',
+  vol_creating:'No volume found, creating one automatically...',vol_auto:'/data volume created automatically',
+  vol_ok:'Volume created successfully!',vol_prov:'It may take a few seconds to finish provisioning.',
+  vol_missing:'No volume at /data found',vol_retry:'Failed to auto-create volume. Click below to retry.',
+  vol_creating_btn:'Creating...',db_active:'✅ Active',db_creating:'⏳ Creating...',db_missing:'❌ Missing',
+  check_fail:'Failed to check',create_fail:'Failed to create volume',
+  no_addrs:'No addresses added',addr_n:'Address #{n}',
+  confirm_del_addr:'Delete this address?',confirm_del_all_addr:'Delete ALL clean IP addresses?',
+  addrs_deleted:'All addresses deleted',no_addrs_del:'No addresses to delete',
+  added_n:'Added {n}',failed_n:'{n} failed',import_err:'Error importing',
+  import_result:'{added} address(es) added, {existed} already existed',
+  confirm_clear_notifs:'Clear all notifications?',no_notifs:'No notifications',
+  updated_at:'Updated {t}',near_limit:"'{l}' near limit:",pct_used:'{p}% Used',
+  expiring_soon:"'{l}' expiring soon:",days_left:'{d} Days',
+  logs_conn:'Connecting to live logs...',logs_err:'Connection error. Reconnecting...',
+  panel_updated:'✅ Panel updated successfully to v{v}',
+  new_version:'🚀 New version available on GitHub: {v} - pull the latest update',
+  chart_mb:'MB',theme:'Theme'
+ },
+ fa:{
+  edit:'ویرایش',copy:'کپی',sub:'اشتراک',qr:'QR',del:'حذف',gh:'مشاهده در گیت‌هاب',
+  status_on:'فعال',status_off:'غیرفعال',expired:'منقضی شده',unlimited:'∞',
+  unit_b:'بایت',unit_kb:'کیلوبایت',unit_mb:'مگابایت',unit_gb:'گیگابایت',ips:'آی‌پی',
+  fmt_days:'{n} روز',fmt_hours:'{n} ساعت',fmt_minutes:'{n} دقیقه',
+  no_inbounds:'هیچ اینباندی یافت نشد',edit_prefix:'ویرایش: ',
+  new_inbound:'کاربر جدید',only_english:'فقط حروف و اعداد انگلیسی مجاز است',
+  need_protocol:'حداقل یکی از پروتکل‌ها (VLESS یا Trojan) را فعال کن',
+  created:'با موفقیت ایجاد شد',create_err:'خطا در ایجاد اینباند',updated:'تغییرات ذخیره شد',update_err:'خطا در ذخیره تغییرات',
+  toggle_fail:'تغییر وضعیت انجام نشد',
+  confirm_reset:'مصرف این اینباند صفر شود؟',reset_ok:'مصرف صفر شد',reset_err:'خطا در بازنشانی مصرف',
+  confirm_del:'این اینباند حذف شود؟',deleted:'حذف شد',delete_err:'خطا در حذف',
+  no_link:'لینکی برای کپی کردن وجود ندارد',no_qr:'داده‌ای برای ساخت QR وجود ندارد',
+  copied:'کپی شد!',copy_fail:'کپی انجام نشد',sub_copied:'آدرس اشتراک کپی شد!',
+  fill_all:'همه‌ی فیلدها را پر کن',pw_short:'رمز عبور باید حداقل ۴ کاراکتر باشد',pw_ok:'رمز عبور بروزرسانی شد',
+  bot_saved:'تنظیمات ربات ذخیره و ربات ریستارت شد',settings_saved:'همه‌ی تنظیمات ذخیره شد',
+  save_fail:'ذخیره‌ی تنظیمات ناموفق بود',save_err:'خطا در ذخیره‌ی تنظیمات',
+  loading:'در حال دریافت…',select_project:'-- یک پروژه انتخاب کن --',err_loading:'خطا در دریافت',
+  found_projects:'{n} پروژه پیدا شد',fetch_fail:'دریافت پروژه‌ها ناموفق بود',
+  rw_token_first:'ابتدا توکن Railway را وارد کن',rw_project_first:'ابتدا یک پروژه انتخاب کن',
+  checking:'در حال بررسی…',vol_exists:'فضای ذخیره‌سازی در مسیر /data وجود دارد',
+  vol_created:'فضای ذخیره‌سازی در مسیر /data ساخته شد',
+  vol_creating:'فضای ذخیره‌سازی پیدا نشد، در حال ساخت خودکار…',
+  vol_auto:'فضای ذخیره‌سازی /data به‌طور خودکار ساخته شد',
+  vol_ok:'فضای ذخیره‌سازی با موفقیت ساخته شد',
+  vol_prov:'تکمیل فرایند ممکن است چند ثانیه طول بکشد.',
+  vol_missing:'فضای ذخیره‌سازی در مسیر /data پیدا نشد',
+  vol_retry:'ساخت خودکار ناموفق بود؛ روی دکمه‌ی زیر بزن تا دوباره تلاش شود.',
+  vol_creating_btn:'در حال ساخت…',db_active:'✅ فعال',db_creating:'⏳ در حال ساخت…',db_missing:'❌ وجود ندارد',
+  check_fail:'بررسی وضعیت ناموفق بود',create_fail:'ساخت فضای ذخیره‌سازی ناموفق بود',
+  no_addrs:'هنوز آدرسی اضافه نشده است',addr_n:'آدرس شماره {n}',
+  confirm_del_addr:'این آدرس حذف شود؟',confirm_del_all_addr:'همه‌ی آی‌پی‌های تمیز حذف شوند؟',
+  addrs_deleted:'همه‌ی آدرس‌ها حذف شدند',no_addrs_del:'آدرسی برای حذف وجود ندارد',
+  added_n:'{n} آدرس اضافه شد',failed_n:'{n} آدرس ناموفق بود',import_err:'خطا در ایمپورت',
+  import_result:'{added} آدرس اضافه شد، {existed} آدرس از قبل وجود داشت',
+  confirm_clear_notifs:'همه‌ی اعلانات حذف شوند؟',no_notifs:'هیچ اعلانی وجود ندارد',
+  updated_at:'آخرین بروزرسانی: {t}',near_limit:'«{l}» نزدیک به سقف مصرف:',pct_used:'{p}٪ مصرف شده',
+  expiring_soon:'«{l}» در آستانه‌ی انقضا:',days_left:'{d} روز باقی‌مانده',
+  logs_conn:'در حال اتصال به لاگ‌های زنده…',logs_err:'خطا در اتصال؛ تلاش دوباره…',
+  panel_updated:'✅ پنل با موفقیت به نسخه v{v} بروزرسانی شد',
+  new_version:'🚀 نسخه‌ی جدید روی گیت‌هاب منتشر شد: {v} — آخرین تغییرات را دریافت کن',
+  chart_mb:'مگابایت',theme:'پوسته'
+ }
 };
-function tr(key){return(langMap[lang]&&langMap[lang][key])||langMap['en'][key]||key}
+function tr(key,vars){
+  let s=(I18N[lang]&&I18N[lang][key])||I18N['en'][key]||key;
+  if(vars)for(const p in vars)s=s.split('{'+p+'}').join(vars[p]);
+  return s;
+}
+/* اعداد در حالت فارسی با ارقام فارسی نمایش داده می‌شوند (مقادیر فنی مثل
+   دامنه، UUID و پورت‌ها دست‌نخورده باقی می‌مانند) */
+function pn(v){
+  if(lang!=='fa')return String(v);
+  return String(v).replace(/[0-9]/g,function(d){return '۰۱۲۳۴۵۶۷۸۹'[d]});
+}
+/* مثل pn ولی برای اعداد اعشاری: ممیز فارسی + جداکننده‌ی هزارگان (۱٬۲۳۴٫۵۶) */
+function pnd(v){
+  if(lang!=='fa')return String(v);
+  const str=String(v);
+  const dot=str.indexOf('.');
+  const frac=dot<0?0:str.length-dot-1;
+  const n=Number(str);
+  if(isNaN(n))return str.replace(/[0-9]/g,function(d){return '۰۱۲۳۴۵۶۷۸۹'[d]});
+  try{return n.toLocaleString('fa-IR',{minimumFractionDigits:frac,maximumFractionDigits:frac});}
+  catch(e){return str.replace(/[0-9]/g,function(d){return '۰۱۲۳۴۵۶۷۸۹'[d]}).replace(/\./g,'٫');}
+}
+/* درصد با علامت فارسی (۸۲٫۴٪) */
+function pc(v){return lang==='fa'?pnd(v)+'٪':v+'%'}
 
-let lang=localStorage.getItem('ll')||'en';
+let lang=localStorage.getItem('ll')||'fa';
 let theme=localStorage.getItem('theme')||'dark';
 let allLinks=[];
 let cf='all';
@@ -4241,16 +4598,21 @@ function setTheme(t){
   const mb=$m('theme-btn-mob');
   const db=$m('theme-btn-desk');
   if(mb)mb.innerHTML=icon;
-  if(db)db.innerHTML=icon+' Theme';
+  if(db)db.innerHTML=icon+' '+tr('theme');
   updChartColors();
 }
 function toggleTheme(){setTheme(theme==='dark'?'light':'dark')}
 
+function loc(){return lang==='fa'?'fa-IR':'en-US'}
 function setLang(l){
   lang=l;
+  document.documentElement.lang=l==='fa'?'fa':'en';
+  document.documentElement.dir=l==='fa'?'rtl':'ltr';
+  document.body.dir=l==='fa'?'rtl':'ltr';
+  // زبان را برای پیام‌های خطای سمت سرور هم در کوکی می‌گذاریم
+  document.cookie='lang='+l+';path=/;max-age=31536000;samesite=lax';
   document.querySelectorAll('.lang-en').forEach(e=>e.classList.toggle('active',l==='en'));
   document.querySelectorAll('.lang-fa').forEach(e=>e.classList.toggle('active',l==='fa'));
-  document.body.dir=l==='fa'?'rtl':'ltr';
   document.querySelectorAll('[data-en]').forEach(el=>{
     const v=el.getAttribute('data-'+l);
     if(v)el.textContent=v;
@@ -4260,7 +4622,24 @@ function setLang(l){
     if(v)el.placeholder=v;
   });
   localStorage.setItem('ll',l);
+  applyLangToCharts();
   filterLinks();
+  renderAddrs();
+  if(isAuthenticated){loadStats();loadNotifs()}
+}
+/* جهت و برچسب‌های نمودارها با تغییر زبان هماهنگ می‌شوند */
+function applyLangToCharts(){
+  if(tChart){
+    tChart.data.datasets[0].label=tr('chart_mb');
+    tChart.options.scales.y.ticks.callback=v=>pn(v)+' '+tr('chart_mb');
+    tChart.options.scales.y.position=(lang==='fa'?'right':'left');
+    tChart.update();
+  }
+  if(iChart){
+    iChart.options.plugins.legend.position=lang==='fa'?'left':'right';
+    iChart.options.plugins.legend.rtl=(lang==='fa');
+    iChart.update();
+  }
 }
 
 function connectLogsWS(){
@@ -4273,7 +4652,7 @@ function connectLogsWS(){
     const c=$m('log-container');
     if(c){c.textContent+=e.data+'\n';c.scrollTop=c.scrollHeight}
   };
-  logsWS.onerror=function(){$m('log-container').textContent='Connection error. Reconnecting...'};
+  logsWS.onerror=function(){$m('log-container').textContent=tr('logs_err')};
   logsWS.onclose=function(){setTimeout(connectLogsWS,5000)};
 }
 
@@ -4341,24 +4720,24 @@ function toast(msg,err=false){
 }
 
 function fmtB(b){
-  if(!b||b===0)return'0 B';
-  return b>=1073741824?(b/1073741824).toFixed(2)+' GB':
-         b>=1048576?(b/1048576).toFixed(2)+' MB':(b/1024).toFixed(1)+' KB';
+  if(!b||b===0)return pn(0)+' '+tr('unit_b');
+  return b>=1073741824?pnd((b/1073741824).toFixed(2))+' '+tr('unit_gb'):
+         b>=1048576?pnd((b/1048576).toFixed(2))+' '+tr('unit_mb'):pnd((b/1024).toFixed(1))+' '+tr('unit_kb');
 }
 function fmtLim(b){
   if(!b||b===0)return'∞';
   const g=b/1073741824;
-  return(g%1===0?g.toFixed(0):g.toFixed(1))+' GB';
+  return pnd(g%1===0?g.toFixed(0):g.toFixed(1))+' '+tr('unit_gb');
 }
 function fmtExp(ea){
   if(!ea||ea===0)return'∞';
   const d=new Date(ea)-new Date();
-  if(d<=0)return'Expired';
+  if(d<=0)return tr('expired');
   const days=Math.floor(d/86400000);
-  if(days>0)return days+'d';
+  if(days>0)return tr('fmt_days',{n:pn(days)});
   const hours=Math.floor(d/3600000);
-  if(hours>0)return hours+'h';
-  return Math.floor(d/60000)+'m';
+  if(hours>0)return tr('fmt_hours',{n:pn(hours)});
+  return tr('fmt_minutes',{n:pn(Math.floor(d/60000))});
 }
 
 function setFilter(filter,el){
@@ -4389,14 +4768,14 @@ function processAlertsAndCharts(){
     const pct=lim>0?(u/lim)*100:0;
     if(lim>0&&pct>=90){
       alertCount++;
-      alertsList.innerHTML+=`<div class="alert-item"><span style="font-weight:600">🔴 '${esc(l.label)}' near limit:</span><span>${pct.toFixed(1)}% Used</span></div>`;
+      alertsList.innerHTML+=`<div class="alert-item"><span style="font-weight:600">🔴 ${tr('near_limit',{l:esc(l.label)})}</span><span>${tr('pct_used',{p:pnd(pct.toFixed(1))})}</span></div>`;
     }
     if(l.expires_at){
       const diff=new Date(l.expires_at)-new Date();
       const days=diff/86400000;
       if(days>0&&days<=3){
         alertCount++;
-        alertsList.innerHTML+=`<div class="alert-item"><span style="font-weight:600">🟡 '${esc(l.label)}' expiring soon:</span><span>${days.toFixed(1)} Days</span></div>`;
+        alertsList.innerHTML+=`<div class="alert-item"><span style="font-weight:600">🟡 ${tr('expiring_soon',{l:esc(l.label)})}</span><span>${tr('days_left',{d:pnd(days.toFixed(1))})}</span></div>`;
       }
     }
   });
@@ -4417,7 +4796,7 @@ function renderLinks(links){
   const mc=$m('mcards');
   if(!links||!links.length){
     tb.innerHTML='';mc.innerHTML='';em.style.display='block';
-    em.textContent=em.getAttribute('data-'+lang)||'No inbounds found';
+    em.textContent=tr('no_inbounds');
     return;
   }
   em.style.display='none';
@@ -4428,7 +4807,7 @@ function renderLinks(links){
     const pct=lim>0?Math.min(100,(u/lim)*100):0;
     const col=pct>90?'var(--red)':pct>70?'var(--yellow)':'var(--gold)';
     const ex=fmtExp(l.expires_at);
-    const ec=ex==='Expired'?'var(--red)':ex==='∞'?'var(--text3)':'var(--text2)';
+    const ec=ex===tr('expired')?'var(--red)':ex==='∞'?'var(--text3)':'var(--text2)';
     const i=idx--;
     const cc=l.current_connections||0;
     const mc2=l.max_connections||0;
@@ -4442,13 +4821,13 @@ function renderLinks(links){
   const delText=tr('del');
 
   tb.innerHTML=rows.map(r=>`<tr>
-    <td style="color:var(--text3);font-size:10.5px">${r.i}</td>
+    <td style="color:var(--text3);font-size:10.5px">${pn(r.i)}</td>
     <td style="font-weight:600">${esc(r.l.label)}</td>
     <td><span class="tag tag-vless">${protoBadge(r.l.variants)}</span></td>
     <td><div class="pill"><span class="pill-used">${fmtB(r.u)}</span><div class="pill-bar"><div class="pill-fill" style="width:${r.pct}%;background:${r.col}"></div></div><span class="pill-lim">${fmtLim(r.lim)}</span></div></td>
-    <td style="font-size:11px;font-weight:600;color:${r.mc2>0&&r.cc>=r.mc2?'var(--red)':'var(--text2)'}">${r.cc}/${r.mc2||'∞'}</td>
+    <td style="font-size:11px;font-weight:600;color:${r.mc2>0&&r.cc>=r.mc2?'var(--red)':'var(--text2)'}">${pn(r.cc)}/${r.mc2?pn(r.mc2):'∞'}</td>
     <td style="font-size:10.5px;font-weight:700;color:${r.ec}">${r.ex}</td>
-    <td><span class="tag ${r.l.active?'tag-on':'tag-off'}">${r.l.active?'On':'Off'}</span></td>
+    <td><span class="tag ${r.l.active?'tag-on':'tag-off'}">${r.l.active?tr('status_on'):tr('status_off')}</span></td>
     <td><div style="display:flex;gap:3px;align-items:center;flex-wrap:wrap">
       <button class="toggle ${r.l.active?'on':''}" data-uid="${r.l.uuid}" onclick="togLink(this)"></button>
       <button class="act-btn act-edit" onclick="showEditMo('${r.l.uuid}')">${editText}</button>
@@ -4462,14 +4841,14 @@ function renderLinks(links){
   mc.innerHTML=rows.map(r=>`<div class="m-card">
     <div class="m-card-hd">
       <div style="display:flex;align-items:center;gap:7px">
-        <span style="font-size:11px;color:var(--text3)">#${r.i}</span>
+        <span style="font-size:11px;color:var(--text3)">#${pn(r.i)}</span>
         <span style="font-weight:600;font-size:14px">${esc(r.l.label)}</span>
         <span class="tag tag-vless">${protoBadge(r.l.variants)}</span>
       </div>
       <button class="toggle ${r.l.active?'on':''}" data-uid="${r.l.uuid}" onclick="togLink(this)"></button>
     </div>
     <div class="pill"><span class="pill-used">${fmtB(r.u)}</span><div class="pill-bar"><div class="pill-fill" style="width:${r.pct}%;background:${r.col}"></div></div><span class="pill-lim">${fmtLim(r.lim)}</span></div>
-    <div style="font-size:11.5px;color:${r.ec};margin-top:6px;font-weight:600">⏳ ${r.ex} · ${r.cc}/${r.mc2||'∞'} IPs</div>
+    <div style="font-size:11.5px;color:${r.ec};margin-top:6px;font-weight:600">⏳ ${r.ex} · ${pn(r.cc)}/${r.mc2?pn(r.mc2):'∞'} ${tr('ips')}</div>
     <div class="m-card-acts">
       <button class="act-btn act-edit" onclick="showEditMo('${r.l.uuid}')">${editText}</button>
       <button class="act-btn act-copy" onclick="cpLink('${esc((r.l.vless_links||[]).join(String.fromCharCode(10)))}')">${copyText}</button>
@@ -4491,7 +4870,7 @@ async function togLink(el){
     const r=await fetch('/api/links/'+uid,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({active:na})});
     if(!r.ok)throw new Error();
     l.active=na;filterLinks();loadStats();
-  }catch(e){toast('Failed to toggle',true)}
+  }catch(e){toast(tr('toggle_fail'),true)}
 }
 
 function showAddMo(){$m('mo-add').classList.add('show')}
@@ -4525,9 +4904,9 @@ function fillVariantFields(prefix,auth,variant){
 }
 
 async function createLink(){
-  const label=$m('nl').value.trim()||'New Link';
-  if(!/^[a-zA-Z0-9\-_. ]+$/.test(label)){toast('Only English letters allowed',true);return}
-  if(!$m('n_vless_enabled').checked && !$m('n_trojan_enabled').checked){toast('Enable at least one protocol (VLESS or Trojan)',true);return}
+  const label=$m('nl').value.trim()||tr('new_inbound');
+  if(!/^[a-zA-Z0-9\-_. ]+$/.test(label)){toast(tr('only_english'),true);return}
+  if(!$m('n_vless_enabled').checked && !$m('n_trojan_enabled').checked){toast(tr('need_protocol'),true);return}
   const v=parseFloat($m('nv').value)||0;
   const mc=parseInt($m('nc').value)||0;
   const days=parseInt($m('nd').value)||0;
@@ -4535,11 +4914,11 @@ async function createLink(){
   try{
     const r=await fetch('/api/links',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!r.ok)throw new Error();
-    toast('Created');
+    toast(tr('created'));
     $m('nl').value='';$m('nv').value='';$m('nc').value='';$m('nd').value='';
     $m('mo-add').classList.remove('show');
     await loadLinks();await loadStats();
-  }catch(e){toast('Error creating link',true)}
+  }catch(e){toast(tr('create_err'),true)}
 }
 
 function showEditMo(uid){
@@ -4553,13 +4932,13 @@ function showEditMo(uid){
   const variants=l.variants||{};
   fillVariantFields('e','vless',variants.vless);
   fillVariantFields('e','trojan',variants.trojan);
-  $m('et').textContent=(lang==='fa'?'ویرایش: ':'EDIT: ')+l.label;
+  $m('et').textContent=tr('edit_prefix')+l.label;
   $m('mo-edit').classList.add('show');
 }
 
 async function saveEdit(){
   const uid=$m('eu').value;
-  if(!$m('e_vless_enabled').checked && !$m('e_trojan_enabled').checked){toast('Enable at least one protocol (VLESS or Trojan)',true);return}
+  if(!$m('e_vless_enabled').checked && !$m('e_trojan_enabled').checked){toast(tr('need_protocol'),true);return}
   const v=parseFloat($m('el').value)||0;
   const mc=parseInt($m('ec').value)||0;
   const days=parseInt($m('ed').value)||0;
@@ -4568,43 +4947,43 @@ async function saveEdit(){
   try{
     const r=await fetch('/api/links/'+uid,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!r.ok)throw new Error();
-    toast('Updated');$m('mo-edit').classList.remove('show');await loadLinks();
-  }catch(e){toast('Error updating',true)}
+    toast(tr('updated'));$m('mo-edit').classList.remove('show');await loadLinks();
+  }catch(e){toast(tr('update_err'),true)}
 }
 
 async function resetTraf(){
   const uid=$m('eu').value;
-  if(!confirm('Reset traffic for this inbound?'))return;
+  if(!confirm(tr('confirm_reset')))return;
   try{
     const r=await fetch('/api/links/'+uid,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({reset_usage:true})});
     if(!r.ok)throw new Error();
-    toast('Traffic reset');await loadLinks();
-  }catch(e){toast('Error resetting',true)}
+    toast(tr('reset_ok'));await loadLinks();
+  }catch(e){toast(tr('reset_err'),true)}
 }
 
 async function delLink(uid){
-  if(!confirm('Delete this inbound?'))return;
+  if(!confirm(tr('confirm_del')))return;
   try{
     const r=await fetch('/api/links/'+uid,{method:'DELETE'});
     if(!r.ok)throw new Error();
-    toast('Deleted');await loadLinks();await loadStats();
-  }catch(e){toast('Error deleting',true)}
+    toast(tr('deleted'));await loadLinks();await loadStats();
+  }catch(e){toast(tr('delete_err'),true)}
 }
 
 function cpLink(txt){
-  if(!txt){toast('No link to copy',true);return}
-  navigator.clipboard.writeText(txt).then(()=>toast('Copied!')).catch(()=>toast('Failed to copy',true));
+  if(!txt){toast(tr('no_link'),true);return}
+  navigator.clipboard.writeText(txt).then(()=>toast(tr('copied'))).catch(()=>toast(tr('copy_fail'),true));
 }
 
 async function cpSub(uid){
   try{
     await navigator.clipboard.writeText('https://'+location.host+'/sub/'+uid);
-    toast('Sub URL copied!');
-  }catch(e){toast('Failed to copy',true)}
+    toast(tr('sub_copied'));
+  }catch(e){toast(tr('copy_fail'),true)}
 }
 
 function showQR(txt){
-  if(!txt){toast('No QR data',true);return}
+  if(!txt){toast(tr('no_qr'),true);return}
   $m('qr-img').src='https://api.qrserver.com/v1/create-qr-code/?size=280x280&data='+encodeURIComponent(txt);
   $m('mo-qr').classList.add('show');
 }
@@ -4633,9 +5012,9 @@ async function saveSettings(){
   const adm=$m('tg-admin-id').value.trim();
   try{
     const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({telegram_token:tok,telegram_admin_id:adm})});
-    if(r.ok)toast('Bot settings saved & restarted');
-    else toast('Failed to save settings',true);
-  }catch(e){toast('Error saving settings',true)}
+    if(r.ok)toast(tr('bot_saved'));
+    else toast(tr('save_fail'),true);
+  }catch(e){toast(tr('save_err'),true)}
 }
 
 async function saveAllSettings(){
@@ -4645,42 +5024,42 @@ async function saveAllSettings(){
   const notifyConn=!!($m('rw-tg-notify-conn')?.checked);
   try{
     const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({telegram_token:tok,telegram_admin_id:adm,railway_token:rwt,notify_connections:notifyConn})});
-    if(r.ok)toast('All settings saved');
-    else toast('Failed to save settings',true);
-  }catch(e){toast('Error saving settings',true)}
+    if(r.ok)toast(tr('settings_saved'));
+    else toast(tr('save_fail'),true);
+  }catch(e){toast(tr('save_err'),true)}
 }
 
 // ── Railway / Permanent Database ──────────────────────────────────────────
 
 async function fetchRailwayProjects(){
   const token=$m('rw-token').value.trim();
-  if(!token){toast('Enter your Railway token first',true);return}
+  if(!token){toast(tr('rw_token_first'),true);return}
   const btn=$m('rw-fetch-btn');
   const sel=$m('rw-project');
-  btn.disabled=true;btn.textContent='Loading...';
-  sel.disabled=true;sel.innerHTML='<option>Loading...</option>';
+  btn.disabled=true;btn.textContent=tr('loading');
+  sel.disabled=true;sel.innerHTML='<option>'+tr('loading')+'</option>';
   $m('rw-volume-info').style.display='none';
   try{
     const r=await fetch('/api/railway/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});
-    if(!r.ok)throw new Error((await r.json()).detail||'Error');
+    if(!r.ok)throw new Error((await r.json()).detail||tr('check_fail'));
     const d=await r.json();
-    sel.innerHTML='<option value="">-- Select a project --</option>'+d.projects.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
+    sel.innerHTML='<option value="">'+tr('select_project')+'</option>'+d.projects.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
     sel.disabled=false;
-    toast('Found '+d.projects.length+' project(s)');
-  }catch(e){toast(e.message||'Failed to fetch projects',true);sel.innerHTML='<option value="">Error loading</option>'}
-  finally{btn.disabled=false;btn.textContent=btn.getAttribute('data-'+lang)||'Fetch'}
+    toast(tr('found_projects',{n:pn(d.projects.length)}));
+  }catch(e){toast(e.message||tr('fetch_fail'),true);sel.innerHTML='<option value="">'+tr('err_loading')+'</option>'}
+  finally{btn.disabled=false;btn.textContent=btn.getAttribute('data-'+lang)||tr('loading')}
 }
 
 async function checkRailwayVolume(){
   const token=$m('rw-token').value.trim();
   const pid=$m('rw-project').value;
-  if(!token||!pid){toast('Select a project first',true);return}
+  if(!token||!pid){toast(tr('rw_project_first'),true);return}
   const info=$m('rw-volume-info');
   const icon=$m('rw-volume-icon');
   const title=$m('rw-volume-title');
   const desc=$m('rw-volume-desc');
   const cbtn=$m('rw-create-btn');
-  info.style.display='';icon.textContent='⏳';title.textContent='Checking...';desc.textContent='';cbtn.style.display='none';
+  info.style.display='';icon.textContent='⏳';title.textContent=tr('checking');desc.textContent='';cbtn.style.display='none';
   try{
     const r=await fetch('/api/railway/volume-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,project_id:pid})});
     if(!r.ok)throw new Error((await r.json()).detail||'Error');
@@ -4688,48 +5067,48 @@ async function checkRailwayVolume(){
     const hasData=d.has_data_volume;
     if(hasData){
       icon.textContent='✅';icon.style.color='var(--green)';
-      title.textContent='Volume at /data exists!';
+      title.textContent=tr('vol_exists');
       const v=d.volumes.find(x=>x.path==='data'||x.path==='/data')||d.volumes[0];
-      desc.textContent=(v?'ID: '+v.id+' | Name: '+v.name+' | State: '+v.state:'');
+      desc.textContent=(v?(lang==='fa'?'شناسه: ':'ID: ')+v.id+(lang==='fa'?' | نام: ':' | Name: ')+v.name+(lang==='fa'?' | وضعیت: ':' | State: ')+v.state:'');
       cbtn.style.display='none';
-      $m('rdb-status').textContent='✅ Active';$m('rdb-status').style.color='var(--green)';
+      $m('rdb-status').textContent=tr('db_active');$m('rdb-status').style.color='var(--green)';
     }else{
       // No volume found - create it automatically, no manual click needed.
-      icon.textContent='⏳';title.textContent='No volume found, creating one automatically...';desc.textContent='';
-      $m('rdb-status').textContent='⏳ Creating...';$m('rdb-status').style.color='var(--gold)';
+      icon.textContent='⏳';title.textContent=tr('vol_creating');desc.textContent='';
+      $m('rdb-status').textContent=tr('db_creating');$m('rdb-status').style.color='var(--gold)';
       await createRailwayVolume(true);
     }
-  }catch(e){toast(e.message||'Failed to check',true);info.style.display='none'}
+  }catch(e){toast(e.message||tr('check_fail'),true);info.style.display='none'}
 }
 
 async function createRailwayVolume(silent){
   const token=$m('rw-token').value.trim();
   const pid=$m('rw-project').value;
-  if(!token||!pid){toast('Select a project first',true);return}
+  if(!token||!pid){toast(tr('rw_project_first'),true);return}
   const icon=$m('rw-volume-icon');
   const title=$m('rw-volume-title');
   const desc=$m('rw-volume-desc');
   const cbtn=$m('rw-create-btn');
-  cbtn.disabled=true;cbtn.textContent='Creating...';
+  cbtn.disabled=true;cbtn.textContent=tr('vol_creating_btn');
   try{
     const r=await fetch('/api/railway/create-volume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,project_id:pid})});
     if(!r.ok)throw new Error((await r.json()).detail||'Error');
-    if(!silent)toast('Volume created successfully!');
-    else toast('/data volume created automatically');
+    if(!silent)toast(tr('vol_ok'));
+    else toast(tr('vol_auto'));
     icon.textContent='✅';icon.style.color='var(--green)';
-    title.textContent='Volume at /data created!';
-    desc.textContent='It may take a few seconds to finish provisioning.';
+    title.textContent=tr('vol_created');
+    desc.textContent=tr('vol_prov');
     cbtn.style.display='none';
-    $m('rdb-status').textContent='✅ Active';$m('rdb-status').style.color='var(--green)';
+    $m('rdb-status').textContent=tr('db_active');$m('rdb-status').style.color='var(--green)';
   }catch(e){
     icon.textContent='❌';icon.style.color='var(--red)';
-    title.textContent='No volume at /data found';
-    desc.textContent=e.message||'Failed to auto-create volume. Click below to retry.';
+    title.textContent=tr('vol_missing');
+    desc.textContent=e.message||tr('vol_retry');
     cbtn.style.display='';
-    $m('rdb-status').textContent='❌ Missing';$m('rdb-status').style.color='var(--red)';
-    toast(e.message||'Failed to create volume',true);
+    $m('rdb-status').textContent=tr('db_missing');$m('rdb-status').style.color='var(--red)';
+    toast(e.message||tr('create_fail'),true);
   }
-  finally{cbtn.disabled=false;cbtn.textContent=cbtn.getAttribute('data-'+lang)||'Create Volume'}
+  finally{cbtn.disabled=false;cbtn.textContent=cbtn.getAttribute('data-'+lang)||tr('vol_creating_btn')}
 }
 
 // Auto-check volume when project selection changes
@@ -4745,25 +5124,25 @@ async function loadStats(){
     if(r.status===401){showLogin();return}
     if(!r.ok)throw new Error();
     sData=await r.json();
-    $m('sv-traffic').innerHTML=(sData.total_traffic_mb||0)+'<span class="stat-unit"> MB</span>';
-    $m('sv-links').textContent=sData.links_count||0;
-    $m('sv-uptime').textContent=sData.uptime||'-';
+    $m('sv-traffic').innerHTML=pnd(sData.total_traffic_mb||0)+'<span class="stat-unit"> '+tr('unit_mb')+'</span>';
+    $m('sv-links').textContent=pn(sData.links_count||0);
+    $m('sv-uptime').textContent=pn(sData.uptime||'-');
     $m('sv-domain').textContent=sData.domain||'-';
-    $m('nb').textContent=sData.links_count||0;
-    $m('last-up').textContent='Updated '+new Date().toLocaleTimeString();
-    if($m('t-tr'))$m('t-tr').textContent=(sData.total_traffic_mb||0)+' MB';
-    if($m('t-rq'))$m('t-rq').textContent=(sData.total_requests||0).toLocaleString();
-    if($m('t-up'))$m('t-up').textContent=sData.uptime||'-';
+    $m('nb').textContent=pn(sData.links_count||0);
+    $m('last-up').textContent=tr('updated_at',{t:new Date().toLocaleTimeString(loc())});
+    if($m('t-tr'))$m('t-tr').textContent=pnd(sData.total_traffic_mb||0)+' '+tr('unit_mb');
+    if($m('t-rq'))$m('t-rq').textContent=(sData.total_requests||0).toLocaleString(loc());
+    if($m('t-up'))$m('t-up').textContent=pn(sData.uptime||'-');
     if(sData.cpu_percent!==undefined){
       const c=sData.cpu_percent;
       const cc=c>80?'var(--red)':c>50?'var(--yellow)':'var(--gold)';
-      $m('cpu-v').textContent=c.toFixed(1)+'%';$m('cpu-v').style.color=cc;
+      $m('cpu-v').textContent=pc(c.toFixed(1));$m('cpu-v').style.color=cc;
       $m('cpu-b').style.width=c+'%';$m('cpu-b').style.background=cc;
     }
     if(sData.memory_percent!==undefined){
       const m=sData.memory_percent;
       const mc=m>80?'var(--red)':m>50?'var(--yellow)':'var(--green)';
-      $m('mem-v').textContent=m.toFixed(1)+'%';$m('mem-v').style.color=mc;
+      $m('mem-v').textContent=pc(m.toFixed(1));$m('mem-v').style.color=mc;
       $m('mem-b').style.width=m+'%';$m('mem-b').style.background=mc;
     }
     updChart();
@@ -4782,12 +5161,12 @@ async function loadLinks(){
 
 async function chgPw(){
   const cur=$m('cpw').value;const nw=$m('npw').value;
-  if(!cur||!nw){toast('Fill all fields',true);return}
-  if(nw.length<4){toast('Password must be at least 4 characters',true);return}
+  if(!cur||!nw){toast(tr('fill_all'),true);return}
+  if(nw.length<4){toast(tr('pw_short'),true);return}
   try{
     const r=await fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:cur,new_password:nw})});
     if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.detail||'Error')}
-    toast('Password updated');$m('cpw').value='';$m('npw').value='';
+    toast(tr('pw_ok'));$m('cpw').value='';$m('npw').value='';
   }catch(e){toast(e.message,true)}
 }
 
@@ -4796,12 +5175,12 @@ function initChart(){
   if(!ctx||tChart)return;
   tChart=new Chart(ctx,{
     type:'bar',
-    data:{labels:[],datasets:[{label:'MB',data:[],backgroundColor:'rgba(255,215,0,0.4)',borderColor:'#FFD700',borderWidth:1,borderRadius:4}]},
+    data:{labels:[],datasets:[{label:tr('chart_mb'),data:[],backgroundColor:'rgba(255,215,0,0.4)',borderColor:'#FFD700',borderWidth:1,borderRadius:4}]},
     options:{responsive:true,maintainAspectRatio:false,
       plugins:{legend:{display:false}},
       scales:{
         x:{grid:{display:false},ticks:{color:'rgba(255,215,0,0.35)',font:{size:10}}},
-        y:{grid:{color:'rgba(255,215,0,0.06)'},ticks:{color:'rgba(255,215,0,0.35)',font:{size:10},callback:v=>v+' MB'},beginAtZero:true}
+        y:{position:(lang==='fa'?'right':'left'),grid:{color:'rgba(255,215,0,0.06)'},ticks:{color:'rgba(255,215,0,0.35)',font:{size:10},callback:v=>pn(v)+' '+tr('chart_mb')},beginAtZero:true}
       }
     }
   });
@@ -4814,7 +5193,7 @@ function initChart(){
         backgroundColor:[],
         borderWidth:0}]},
       options:{responsive:true,maintainAspectRatio:false,
-        plugins:{legend:{display:true,position:'right',labels:{color:'rgba(255,255,255,0.6)',font:{size:10}}}}}
+        plugins:{legend:{display:true,position:(lang==='fa'?'left':'right'),rtl:(lang==='fa'),labels:{color:'rgba(255,255,255,0.6)',font:{size:10,family:"'Vazirmatn',sans-serif"}}}}}
     });
   }
   updChartColors();
@@ -4849,11 +5228,11 @@ async function loadAddrs(){
 function renderAddrs(){
   const el=$m('addr-list');
   if(!el)return;
-  if(!allAddrs||!allAddrs.length){el.innerHTML='<div style="color:var(--text3);font-size:12px">No addresses added</div>';return}
+  if(!allAddrs||!allAddrs.length){el.innerHTML='<div style="color:var(--text3);font-size:12px">'+tr('no_addrs')+'</div>';return}
   el.innerHTML=allAddrs.map((a,i)=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--surface3);border:1px solid var(--border);border-radius:10px;margin-bottom:8px">
     <div style="display:flex;align-items:center;gap:10px">
       <span style="color:var(--gold);font-size:16px">🌐</span>
-      <div><div style="font-size:14px;font-weight:600">${esc(a)}</div><div style="font-size:11px;color:var(--text3);margin-top:2px">Address #${i+1}</div></div>
+      <div><div style="font-size:14px;font-weight:600;direction:ltr;text-align:left">${esc(a)}</div><div style="font-size:11px;color:var(--text3);margin-top:2px">${tr('addr_n',{n:pn(i+1)})}</div></div>
     </div>
     <button class="act-btn act-del" onclick="delAddr(${i})">${tr('del')}</button>
   </div>`).join('');
@@ -4878,13 +5257,13 @@ function renderNotifs(notifs){
   const el=$m('notif-list');
   if(!el)return;
   if(!notifs||!notifs.length){
-    el.innerHTML='<div class="empty" style="padding:32px">'+(lang==='fa'?'هیچ اعلانی وجود ندارد':'No notifications')+'</div>';
+    el.innerHTML='<div class="empty" style="padding:32px">'+tr('no_notifs')+'</div>';
     return;
   }
   el.innerHTML=notifs.map(n=>{
     const icon=NOTIF_ICONS[n.type]||'ℹ️';
     const cls=n.seen?'':'unseen';
-    const time=new Date(n.created_at).toLocaleString();
+    const time=new Date(n.created_at).toLocaleString(loc(),{dateStyle:'medium',timeStyle:'short'});
     const linkHtml=n.link?`<a href="${esc(n.link)}" target="_blank" class="notif-link">${tr('gh')} ↗</a>`:'';
     return `<div class="notif-item ${cls}" onclick="markSeen(${n.id})">
       <div class="notif-icon ${n.type}">${icon}</div>
@@ -4912,7 +5291,7 @@ async function markAllSeen(){
 }
 
 async function clearNotifs(){
-  if(!confirm(lang==='fa'?'حذف همه اعلانات؟':'Clear all notifications?'))return;
+  if(!confirm(tr('confirm_clear_notifs')))return;
   await fetch('/api/notifications',{method:'DELETE'});
   await loadNotifs();
   await updateNotifBadge();
@@ -4925,7 +5304,7 @@ async function updateNotifBadge(){
     const d=await r.json();
     const badge=$m('notif-badge');
     if(badge){
-      if(d.count>0){badge.style.display='';badge.textContent=d.count}
+      if(d.count>0){badge.style.display='';badge.textContent=pn(d.count)}
       else{badge.style.display='none'}
     }
   }catch(e){}
@@ -4941,28 +5320,28 @@ async function addAddrs(){
       if(r.ok)ok++;else fail++;
     }catch(e){fail++}
   }
-  if(ok)toast('Added '+ok);
-  if(fail)toast(fail+' failed',true);
+  if(ok)toast(tr('added_n',{n:pn(ok)}));
+  if(fail)toast(tr('failed_n',{n:pn(fail)}),true);
   if(ok){$m('mo-addr').classList.remove('show');await loadAddrs()}
 }
 
 async function delAddr(i){
-  if(!confirm('Delete this address?'))return;
+  if(!confirm(tr('confirm_del_addr')))return;
   try{
     const r=await fetch('/api/addresses/'+i,{method:'DELETE'});
     if(!r.ok)throw new Error();
-    toast('Deleted');await loadAddrs();
-  }catch(e){toast('Error deleting',true)}
+    toast(tr('deleted'));await loadAddrs();
+  }catch(e){toast(tr('delete_err'),true)}
 }
 
 async function delAllAddrs(){
-  if(!allAddrs||!allAddrs.length){toast('No addresses to delete',true);return}
-  if(!confirm('Delete ALL clean IP addresses?'))return;
+  if(!allAddrs||!allAddrs.length){toast(tr('no_addrs_del'),true);return}
+  if(!confirm(tr('confirm_del_all_addr')))return;
   try{
     const r=await fetch('/api/addresses',{method:'DELETE'});
     if(!r.ok)throw new Error();
-    toast('All addresses deleted');await loadAddrs();
-  }catch(e){toast('Error deleting',true)}
+    toast(tr('addrs_deleted'));await loadAddrs();
+  }catch(e){toast(tr('delete_err'),true)}
 }
 
 // همه‌ی آی‌پی‌های railway_ips.txt رو یکجا (یک درخواست، بدون تاخیر
@@ -4971,10 +5350,10 @@ async function importAddrs(source){
   try{
     const r=await fetch('/api/addresses/import/'+source,{method:'POST'});
     const d=await r.json().catch(()=>null);
-    if(!r.ok){toast((d&&d.detail)||'Error importing',true);return}
-    toast((d.added||0)+' address(es) added, '+((d.total_in_file||0)-(d.added||0))+' already existed');
+    if(!r.ok){toast((d&&d.detail)||tr('import_err'),true);return}
+    toast(tr('import_result',{added:pn(d.added||0),existed:pn((d.total_in_file||0)-(d.added||0))}));
     await loadAddrs();
-  }catch(e){toast('Error importing',true)}
+  }catch(e){toast(tr('import_err'),true)}
 }
 
 setTheme(theme);
@@ -5004,7 +5383,7 @@ async function checkPanelVersion(isPeriodic){
       loadedPanelVersion=serverVersion;
       const lastSeen=localStorage.getItem(PANEL_VERSION_KEY);
       if(lastSeen&&lastSeen!==serverVersion){
-        toast('✅ Panel updated successfully to v'+serverVersion);
+        toast(tr('panel_updated',{v:pnd(serverVersion)}));
       }
       localStorage.setItem(PANEL_VERSION_KEY,serverVersion);
     }
@@ -5013,7 +5392,7 @@ async function checkPanelVersion(isPeriodic){
     if(d.update_available&&d.latest_github_version){
       const alreadyNotified=localStorage.getItem(PANEL_GH_NOTIFIED_KEY);
       if(alreadyNotified!==d.latest_github_version){
-        toast('🚀 New version available on GitHub: '+d.latest_github_version+' - pull the latest update');
+        toast(tr('new_version',{v:pnd(d.latest_github_version)}));
         localStorage.setItem(PANEL_GH_NOTIFIED_KEY,d.latest_github_version);
       }
     }
