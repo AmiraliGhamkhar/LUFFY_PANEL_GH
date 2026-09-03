@@ -115,8 +115,8 @@ async def check_github_latest(force: bool = False) -> dict:
     if new_tag and new_tag != cached_tag and cached_tag:
         await create_notification(
             type="update",
-            title=L("notif_version_title", tag=new_tag),
-            message=L("notif_version_msg", old=cached_tag, new=new_tag),
+            title=L("notif_version_title", tag=vnum(new_tag)),
+            message=L("notif_version_msg", old=vnum(cached_tag), new=vnum(new_tag)),
             link=new_url,
         )
 
@@ -379,8 +379,8 @@ BOT_I18N = {
         "stats": (
             "<b>📊 Server Status Dashboard</b>\n\n"
             "🌐 <b>Domain:</b> <code>{domain}</code>\n"
-            "🔋 <b>CPU:</b> <code>{cpu:.1f}%</code>\n"
-            "💾 <b>Memory:</b> <code>{mem:.1f}%</code>\n"
+            "🔋 <b>CPU:</b> <code>{cpu}</code>\n"
+            "💾 <b>Memory:</b> <code>{mem}</code>\n"
             "⏱ <b>Uptime:</b> <code>{uptime}</code>\n"
             "👥 <b>Active Connections:</b> <code>{active}</code>\n"
             "📈 <b>Total Traffic:</b> <code>{traffic} MB</code>\n"
@@ -469,11 +469,11 @@ BOT_I18N = {
         "stats": (
             "<b>📊 وضعیت سرور</b>\n\n"
             "🌐 <b>دامنه:</b> <code>{domain}</code>\n"
-            "🔋 <b>پردازنده:</b> <code>{cpu:.1f}%</code>\n"
-            "💾 <b>رم:</b> <code>{mem:.1f}%</code>\n"
+            "🔋 <b>پردازنده:</b> <code>{cpu}</code>\n"
+            "💾 <b>رم:</b> <code>{mem}</code>\n"
             "⏱ <b>آپ‌تایم:</b> <code>{uptime}</code>\n"
             "👥 <b>اتصالات فعال:</b> <code>{active}</code>\n"
-            "📈 <b>ترافیک کل:</b> <code>{traffic} MB</code>\n"
+            "📈 <b>ترافیک کل:</b> <code>{traffic} مگابایت</code>\n"
             "🔑 <b>تعداد کاربران:</b> <code>{links}</code>"
         ),
         "users_title": "<b>👥 لیست کاربران و میزان مصرف:</b>\n",
@@ -1350,15 +1350,15 @@ def fmt_exp_py(ea: str | None) -> str:
     diff = exp - datetime.now(timezone.utc)
     seconds = diff.total_seconds()
     if seconds <= 0:
-        return "Expired"
+        return "منقضی شده" if bot_lang() == "fa" else "Expired"
     days = int(seconds // 86400)
     if days > 0:
-        return f"{days}d"
+        return f"{fa_num(days)} روز" if bot_lang() == "fa" else f"{days}d"
     hours = int(seconds // 3600)
     if hours > 0:
-        return f"{hours}h"
+        return f"{fa_num(hours)} ساعت" if bot_lang() == "fa" else f"{hours}h"
     minutes = int(seconds // 60)
-    return f"{minutes}m"
+    return f"{fa_num(minutes)} دقیقه" if bot_lang() == "fa" else f"{minutes}m"
 
 async def get_internal_stats():
     async with connections_lock:
@@ -1375,16 +1375,58 @@ async def get_internal_stats():
         "memory_percent": psutil.virtual_memory().percent,
     }
 
+def vnum(v) -> str:
+    """شماره‌ی نسخه با ارقام و ممیز فارسی (۱٫۲٫۰) — در زبان انگلیسی بدون تغییر."""
+    return fa_num(v).replace(".", "٫") if bot_lang() == "fa" else str(v)
+
+
+def exp_disp(raw: str | None) -> str:
+    """تاریخ انقضا برای نمایش: در فارسی شمسی با ارقام فارسی، در انگلیسی همان رشته‌ی اصلی."""
+    if bot_lang() != "fa":
+        return raw or "-"
+    dt = parse_expires_at(raw)
+    return fa_date(dt) if dt else (raw or "-")
+
+
+def fa_dec(value, nd: int = 1) -> str:
+    """عدد اعشاری با ارقام، ممیز و جداکننده‌ی هزارگان فارسی: ۱٬۲۳۴٫۵۶"""
+    try:
+        return fa_num(f"{float(value):,.{nd}f}").replace(",", "٬").replace(".", "٫")
+    except Exception:
+        return fa_num(value)
+
+
+def _num(v, suffix: str = "") -> str:
+    """عدد را متناسب با زبان ربات با ارقام فارسی یا لاتین برمی‌گرداند."""
+    return f"{fa_num(v)}{suffix}" if bot_lang() == "fa" else f"{v}{suffix}"
+
+
 def make_stats_text(s_data) -> str:
+    cpu_v = s_data.get("cpu_percent", 0)
+    mem_v = s_data.get("memory_percent", 0)
+    uptime_v = s_data.get("uptime", "-")
+    active_v = s_data.get("active_connections", 0)
+    traffic_v = s_data.get("total_traffic_mb", 0)
+    links_v = s_data.get("links_count", 0)
+
+    if bot_lang() == "fa":
+        cpu, mem = fa_dec(cpu_v, 1) + "٪", fa_dec(mem_v, 1) + "٪"
+        uptime, active = fa_num(uptime_v), fa_num(active_v)
+        traffic, links = fa_dec(traffic_v, 2), fa_num(links_v)
+    else:
+        cpu, mem = f"{cpu_v:.1f}%", f"{mem_v:.1f}%"
+        uptime, active = str(uptime_v), str(active_v)
+        traffic, links = f"{traffic_v}", str(links_v)
+
     return L(
         "stats",
         domain=s_data.get("domain", "-"),
-        cpu=s_data.get("cpu_percent", 0),
-        mem=s_data.get("memory_percent", 0),
-        uptime=s_data.get("uptime", "-"),
-        active=s_data.get("active_connections", 0),
-        traffic=s_data.get("total_traffic_mb", 0),
-        links=s_data.get("links_count", 0),
+        cpu=cpu,
+        mem=mem,
+        uptime=uptime,
+        active=active,
+        traffic=traffic,
+        links=links,
     )
 
 async def make_users_text() -> str:
@@ -1396,8 +1438,8 @@ async def make_users_text() -> str:
         return L("no_inbounds")
 
     for uid, data in items:
-        used = _fmt_bytes(data["used_bytes"])
-        limit = _fmt_bytes(data["limit_bytes"]) if data["limit_bytes"] > 0 else "∞"
+        used = bfmt(data["used_bytes"])
+        limit = bfmt(data["limit_bytes"]) if data["limit_bytes"] > 0 else "∞"
         ex = fmt_exp_py(data.get("expires_at"))
         status = L("status_on") if data["active"] else L("status_off")
         lines.append(L("users_line", label=data['label'], used=used, limit=limit, exp=ex, status=status))
@@ -1413,9 +1455,9 @@ async def make_top_users_text() -> str:
 
     sorted_items = sorted(items, key=lambda x: x[1].get("used_bytes", 0), reverse=True)[:5]
     for i, (uid, data) in enumerate(sorted_items, 1):
-        used = _fmt_bytes(data["used_bytes"])
-        limit = _fmt_bytes(data["limit_bytes"]) if data["limit_bytes"] > 0 else "∞"
-        lines.append(L("top_line", i=i, label=data['label'], used=used, limit=limit))
+        used = bfmt(data["used_bytes"])
+        limit = bfmt(data["limit_bytes"]) if data["limit_bytes"] > 0 else "∞"
+        lines.append(L("top_line", i=_num(i), label=data['label'], used=used, limit=limit))
     return "\n".join(lines)
 
 async def handle_create_command(text: str):
@@ -1468,8 +1510,8 @@ async def handle_create_command(text: str):
     vless_link = "\n".join(links_for_all_variants(LINKS[uid], uid))
     sub_url = f"https://{get_domain()}/sub/{uid}"
 
-    quota_str = _fmt_bytes(limit_bytes) if limit_bytes > 0 else L("unlimited")
-    expiry_str = L("days_fmt", days=days_valid) if days_valid > 0 else L("unlimited")
+    quota_str = bfmt(limit_bytes) if limit_bytes > 0 else L("unlimited")
+    expiry_str = L("days_fmt", days=_num(days_valid)) if days_valid > 0 else L("unlimited")
 
     return L(
         "create_success",
@@ -1543,13 +1585,13 @@ async def telegram_notifier_cron():
                 if limit > 0 and used >= limit:
                     notif_key = f"quota_{uid}"
                     if notif_key not in notified_uids:
-                        msg = L("quota_alert", label=label, used=_fmt_bytes(used), limit=_fmt_bytes(limit))
+                        msg = L("quota_alert", label=label, used=bfmt(used), limit=bfmt(limit))
                         await send_tg_message(msg)
                         notified_uids.add(notif_key)
                         await create_notification(
                             type="quota",
                             title=L("notif_quota_title", label=label),
-                            message=L("notif_quota_msg", label=label, used=_fmt_bytes(used), limit=_fmt_bytes(limit)),
+                            message=L("notif_quota_msg", label=label, used=bfmt(used), limit=bfmt(limit)),
                         )
                 
                 expires_at_str = data.get("expires_at")
@@ -1558,13 +1600,13 @@ async def telegram_notifier_cron():
                     if exp and exp < datetime.now(timezone.utc):
                         notif_key = f"expiry_{uid}"
                         if notif_key not in notified_uids:
-                            msg = L("expiry_alert", label=label, exp=expires_at_str)
+                            msg = L("expiry_alert", label=label, exp=exp_disp(expires_at_str))
                             await send_tg_message(msg)
                             notified_uids.add(notif_key)
                             await create_notification(
                                 type="expiry",
-                                title=f"Expired: {label}",
-                                message=f"{label} has expired on {expires_at_str}",
+                                title=L("notif_expiry_title", label=label),
+                                message=L("notif_expiry_msg", label=label, exp=exp_disp(expires_at_str)),
                             )
                             
         except Exception as e:
@@ -2177,6 +2219,11 @@ def fa_num(value) -> str:
     return "".join(PERSIAN_DIGITS[int(ch)] if ch.isdigit() else ch for ch in str(value))
 
 
+def bfmt(b: int) -> str:
+    """فرمت حجم متناسب با زبان فعلی ربات (فارسی: ارقام و واحد فارسی)."""
+    return fmt_bytes_fa(b) if bot_lang() == "fa" else _fmt_bytes(b)
+
+
 def fmt_bytes_fa(b: int) -> str:
     """حجم را با ارقام و واحد فارسی نشان می‌دهد: ۱۲٫۳ مگابایت"""
     b = b or 0
@@ -2359,7 +2406,7 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
         /* Header */
         .header{{text-align:center;padding:24px 0 20px}}
         .header-logo{{display:inline-flex;align-items:center;gap:10px;margin-bottom:8px}}
-        .header-title{{font-family:'Lalezar',serif;font-size:30px;font-weight:400;line-height:1.7;
+        .header-title{{font-family:'Lalezar','Vazirmatn',serif;font-size:30px;font-weight:400;line-height:1.7;
             background:linear-gradient(135deg,#fff,var(--gold));
             -webkit-background-clip:text;-webkit-text-fill-color:transparent}}
         .header-sub{{font-size:12px;color:var(--text3);letter-spacing:0}}
@@ -2437,7 +2484,7 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
         .configs-card{{background:var(--surface2);border:1px solid var(--border);border-radius:20px;
             padding:18px;margin-bottom:14px}}
         .configs-header{{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}}
-        .configs-title{{font-family:'Lalezar',serif;font-size:18px;font-weight:400;color:var(--text);letter-spacing:0;line-height:1.7}}
+        .configs-title{{font-family:'Lalezar','Vazirmatn',serif;font-size:18px;font-weight:400;color:var(--text);letter-spacing:0;line-height:1.7}}
         .configs-count{{font-size:10px;color:var(--text3);background:var(--gold-dim);
             border:1px solid var(--border);border-radius:6px;padding:2px 8px}}
         .config-item{{display:flex;align-items:center;justify-content:space-between;
@@ -2449,7 +2496,7 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
         .config-name{{font-size:13px;font-weight:600;color:var(--text);
             overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
         .config-type{{font-size:10px;color:var(--text3);margin-top:1px}}
-        .ping-badge{{margin-left:8px;font-weight:700}}
+        .ping-badge{{margin-inline-start:8px;font-weight:700}}
         .config-actions{{display:flex;gap:5px;flex-shrink:0}}
         .btn-copy{{padding:5px 10px;border-radius:7px;border:1px solid rgba(255,215,0,0.2);
             background:var(--gold-dim);color:var(--gold);font-size:10.5px;font-weight:700;
@@ -2479,7 +2526,7 @@ def generate_landing_page(link: dict, uid: str, addresses: list[str]) -> str:
         .mo-close{{position:absolute;top:12px;left:12px;right:auto;background:var(--surface2);
             border:1px solid var(--border);color:var(--text3);width:28px;height:28px;
             border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px}}
-        .mo-title{{font-family:'Lalezar',serif;font-size:20px;font-weight:400;color:var(--gold);letter-spacing:0;line-height:1.7;margin-bottom:4px}}
+        .mo-title{{font-family:'Lalezar','Vazirmatn',serif;font-size:20px;font-weight:400;color:var(--gold);letter-spacing:0;line-height:1.7;margin-bottom:4px}}
 
         /* Toast */
         .toast{{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(16px);
@@ -3515,7 +3562,10 @@ async def websocket_tunnel(websocket: WebSocket, auth: str, uuid: str):
                     duration_s = 0
                 async with LINKS_LOCK:
                     label = LINKS.get(info.get("uuid"), {}).get("label", info.get("uuid", uuid))
-                extra = f"duration {duration_s}s, {_fmt_bytes(info.get('bytes', 0))}"
+                if bot_lang() == "fa":
+                    extra = f"مدت: {_num(duration_s)} ثانیه، حجم: {bfmt(info.get('bytes', 0))}"
+                else:
+                    extra = f"duration {duration_s}s, {_fmt_bytes(info.get('bytes', 0))}"
                 await _log_connection_event("disconnect", label, info.get("uuid", uuid), info.get("ip", client_ip), extra)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3598,7 +3648,7 @@ body[dir="rtl"] .live-logs-container{direction:ltr;text-align:left}
   border-bottom:1px solid var(--border);flex-shrink:0}
 .sb-hat{filter:drop-shadow(0 0 10px rgba(255,215,0,.5));transition:filter .3s}
 .sb-hat:hover{filter:drop-shadow(0 0 18px rgba(255,215,0,.9))}
-.sb-title{font-family:'Lalezar',serif;font-size:14px;color:rgba(255,215,0,.75);
+.sb-title{font-family:'Lalezar','Vazirmatn',serif;font-size:14px;color:rgba(255,215,0,.75);
   white-space:nowrap;overflow:hidden;line-height:1.6}
 .sb-nav{flex:1;display:flex;flex-direction:column;justify-content:flex-end;padding-bottom:12px;
   gap:2px;padding-left:8px;padding-right:8px}
@@ -3656,7 +3706,7 @@ body[dir="rtl"] .live-logs-container{direction:ltr;text-align:left}
 .page.active{display:block}
 @keyframes pgIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 .page-header{margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
-.page-title{font-family:'Lalezar',serif;font-size:22px;font-weight:400;color:var(--text);letter-spacing:0;line-height:1.9}
+.page-title{font-family:'Lalezar','Vazirmatn',serif;font-size:22px;font-weight:400;color:var(--text);letter-spacing:0;line-height:1.9}
 .page-sub{font-size:11px;color:var(--text3);margin-top:3px;letter-spacing:.02em}
 .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
 .stat-card{background:var(--surface2);border:1px solid var(--border);border-radius:12px;
@@ -3738,7 +3788,7 @@ body[dir="rtl"] .live-logs-container{direction:ltr;text-align:left}
   width:100%;max-width:460px;position:relative;box-shadow:var(--gold-glow);
   transform:scale(.92);opacity:0;transition:all .38s cubic-bezier(.34,1.56,.64,1)}
 .mo.show .mo-box{transform:scale(1);opacity:1}
-.mo-title{font-family:'Lalezar',serif;font-size:20px;font-weight:400;margin-bottom:16px;
+.mo-title{font-family:'Lalezar','Vazirmatn',serif;font-size:20px;font-weight:400;margin-bottom:16px;
   color:var(--gold);letter-spacing:0;line-height:1.7}
 .mo-close{position:absolute;top:14px;left:14px;right:auto;background:var(--surface3);border:1px solid var(--border);
   color:var(--text3);width:30px;height:30px;border-radius:7px;cursor:pointer;display:flex;
@@ -3780,7 +3830,7 @@ body[dir="rtl"] .live-logs-container{direction:ltr;text-align:left}
 .login-box{background:var(--surface2);border:1px solid var(--border2);border-radius:20px;
   padding:36px 32px;width:100%;max-width:360px;box-shadow:var(--gold-glow)}
 .login-logo{text-align:center;margin-bottom:28px}
-.login-title{font-family:'Lalezar',serif;font-size:30px;font-weight:400;color:var(--gold);letter-spacing:0;line-height:1.8}
+.login-title{font-family:'Lalezar','Vazirmatn',serif;font-size:30px;font-weight:400;color:var(--gold);letter-spacing:0;line-height:1.8}
 .login-sub{font-size:11px;color:var(--text3);margin-top:6px}
 
 /* Notification styles */
@@ -3805,7 +3855,7 @@ body[dir="rtl"] .live-logs-container{direction:ltr;text-align:left}
 .pill-fill-gold{background:linear-gradient(90deg,var(--gold),var(--gold2))}
 
 @media(max-width:768px){
-  .mob-hd{display:flex;height:65px;padding:0 20px}
+  .mob-hd{display:flex;height:65px;padding:0 20px;flex-direction:row-reverse}
   .mob-tl-group .lang-btn{font-size:13px;padding:7px 10px;border-radius:8px}
   .theme-toggle{font-size:18px;padding:7px 10px;border-radius:8px}
   .mob-hd span{font-size:22px !important}
@@ -3908,7 +3958,7 @@ body[dir="rtl"] .live-logs-container{direction:ltr;text-align:left}
         </a>
       </div>
     </div>
-    <span style="font-family:'Lalezar',serif;font-size:22px;font-weight:400;color:var(--gold);letter-spacing:0">لافی</span>
+    <span style="font-family:'Lalezar','Vazirmatn',serif;font-size:22px;font-weight:400;color:var(--gold);letter-spacing:0">لافی</span>
   </div>
 
   <!-- SIDEBAR -->
@@ -4044,7 +4094,7 @@ body[dir="rtl"] .live-logs-container{direction:ltr;text-align:left}
       <div class="tb">
         <div class="search-wrap">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input id="srch" data-ph-en="Search name…" data-ph-fa="جستجوی نام…" placeholder="جستجوی نام…" oninput="filterLinks()">
+          <input id="srch" data-ph-en="Search name…" data-ph-fa="جستجوی نام…" placeholder="جستجوی نام…" dir="auto" oninput="filterLinks()">
         </div>
         <div class="filter-chips">
           <button class="chip active" data-filter="all" onclick="setFilter('all',this)" data-en="All" data-fa="همه">همه</button>
@@ -4127,8 +4177,8 @@ body[dir="rtl"] .live-logs-container{direction:ltr;text-align:left}
       <div class="grid-2">
         <div class="card">
           <div class="card-hd"><div class="card-title" data-en="Telegram Bot Settings" data-fa="تنظیمات ربات تلگرام">تنظیمات ربات تلگرام</div></div>
-          <div class="fg"><label class="fl" data-en="Bot Token" data-fa="توکن ربات">توکن ربات</label><input class="fi" type="text" id="tg-token" placeholder="123456:ABC-DEF..."></div>
-          <div class="fg"><label class="fl" data-en="Admin Chat ID" data-fa="شناسه ادمین">شناسه ادمین</label><input class="fi" type="text" id="tg-admin-id" placeholder="987654321"></div>
+          <div class="fg"><label class="fl" data-en="Bot Token" data-fa="توکن ربات">توکن ربات</label><input class="fi" type="text" id="tg-token" placeholder="123456:ABC-DEF..." dir="ltr" style="text-align:left"></div>
+          <div class="fg"><label class="fl" data-en="Admin Chat ID" data-fa="شناسه ادمین">شناسه ادمین</label><input class="fi" type="text" id="tg-admin-id" placeholder="987654321" dir="ltr" style="text-align:left"></div>
           <button class="btn btn-gold" onclick="saveSettings()" style="margin-top:10px;width:100%;justify-content:center" data-en="Save & Restart Bot" data-fa="ذخیره و ریستارت ربات">ذخیره و ریستارت ربات</button>
         </div>
         <div class="card">
@@ -4158,7 +4208,7 @@ body[dir="rtl"] .live-logs-container{direction:ltr;text-align:left}
         <div class="fg">
           <label class="fl" data-en="Railway Token" data-fa="توکن Railway">توکن Railway</label>
           <div style="display:flex;gap:8px">
-            <input class="fi" type="password" id="rw-token" placeholder="rly_..." style="flex:1">
+            <input class="fi" type="password" id="rw-token" placeholder="rly_..." style="flex:1" dir="ltr" >
             <button class="btn btn-ghost btn-sm" onclick="fetchRailwayProjects()" id="rw-fetch-btn" data-en="Fetch" data-fa="دریافت">دریافت</button>
           </div>
         </div>
@@ -4183,8 +4233,8 @@ body[dir="rtl"] .live-logs-container{direction:ltr;text-align:left}
       <!-- Bot Settings (moved here too) -->
       <div class="card">
         <div class="card-hd"><div class="card-title" data-en="Telegram Bot" data-fa="ربات تلگرام">ربات تلگرام</div></div>
-        <div class="fg"><label class="fl" data-en="Bot Token" data-fa="توکن ربات">توکن ربات</label><input class="fi" type="text" id="rw-tg-token" placeholder="123456:ABC-DEF..."></div>
-        <div class="fg"><label class="fl" data-en="Admin Chat ID" data-fa="شناسه ادمین">شناسه ادمین</label><input class="fi" type="text" id="rw-tg-admin" placeholder="987654321"></div>
+        <div class="fg"><label class="fl" data-en="Bot Token" data-fa="توکن ربات">توکن ربات</label><input class="fi" type="text" id="rw-tg-token" placeholder="123456:ABC-DEF..." dir="ltr" style="text-align:left"></div>
+        <div class="fg"><label class="fl" data-en="Admin Chat ID" data-fa="شناسه ادمین">شناسه ادمین</label><input class="fi" type="text" id="rw-tg-admin" placeholder="987654321" dir="ltr" style="text-align:left"></div>
         <div class="fg" style="display:flex;align-items:center;gap:8px;margin-top:4px">
           <input type="checkbox" id="rw-tg-notify-conn" style="width:16px;height:16px;accent-color:var(--gold)">
           <label for="rw-tg-notify-conn" style="font-size:12px;cursor:pointer" data-en="Notify on every connect / disconnect" data-fa="اعلان هر ورود و خروج (اتصال و قطع اتصال) کاربران">اعلان هر ورود و خروج (اتصال و قطع اتصال) کاربران</label>
@@ -4201,7 +4251,7 @@ body[dir="rtl"] .live-logs-container{direction:ltr;text-align:left}
   <div class="mo-box">
     <button class="mo-close" onclick="document.getElementById('mo-add').classList.remove('show')">✕</button>
     <div class="mo-title" data-en="ADD INBOUND" data-fa="افزودن اینباند">افزودن اینباند</div>
-    <div class="fg"><label class="fl" data-en="Remark" data-fa="توضیح">توضیح</label><input class="fi" id="nl" data-ph-en="e.g. User 1" data-ph-fa="مثلاً کاربر ۱" placeholder="مثلاً کاربر ۱"></div>
+    <div class="fg"><label class="fl" data-en="Remark" data-fa="توضیح">توضیح</label><input class="fi" id="nl" data-ph-en="e.g. User 1" data-ph-fa="مثلاً کاربر ۱" placeholder="مثلاً کاربر ۱" dir="ltr" style="text-align:right"></div>
     <div class="fr">
       <div class="fg"><label class="fl" data-en="Traffic Limit" data-fa="محدودیت ترافیک">محدودیت ترافیک</label><input class="fi" id="nv" type="number" min="0" step=".1" data-ph-en="0 = unlimited" data-ph-fa="۰ = نامحدود" placeholder="۰ = نامحدود"></div>
       <div class="fg" style="max-width:130px"><label class="fl" data-en="Unit" data-fa="واحد">واحد</label><select class="fs" id="nu"><option value="GB">گیگابایت</option><option value="MB">مگابایت</option></select></div>
@@ -4287,7 +4337,7 @@ body[dir="rtl"] .live-logs-container{direction:ltr;text-align:left}
     <button class="mo-close" onclick="document.getElementById('mo-edit').classList.remove('show')">✕</button>
     <div class="mo-title" id="et" data-en="EDIT INBOUND" data-fa="ویرایش اینباند">ویرایش اینباند</div>
     <input type="hidden" id="eu">
-    <div class="fg"><label class="fl" data-en="Name" data-fa="نام">نام</label><input class="fi" id="en2" readonly style="opacity:.5;cursor:not-allowed"></div>
+    <div class="fg"><label class="fl" data-en="Name" data-fa="نام">نام</label><input class="fi" id="en2" readonly dir="ltr" style="opacity:.5;cursor:not-allowed;text-align:right"></div>
     <div class="fr">
       <div class="fg"><label class="fl" data-en="Traffic Limit" data-fa="محدودیت ترافیک">محدودیت ترافیک</label><input class="fi" id="el" type="number" min="0" step=".1" data-ph-en="0 = unlimited" data-ph-fa="۰ = نامحدود" placeholder="۰ = نامحدود"></div>
       <div class="fg" style="max-width:130px"><label class="fl" data-en="Unit" data-fa="واحد">واحد</label><select class="fs" id="eu2"><option value="GB">گیگابایت</option><option value="MB">مگابایت</option></select></div>
@@ -4387,7 +4437,7 @@ body[dir="rtl"] .live-logs-container{direction:ltr;text-align:left}
   <div class="mo-box">
     <button class="mo-close" onclick="document.getElementById('mo-addr').classList.remove('show')">✕</button>
     <div class="mo-title" data-en="ADD CLEAN IP" data-fa="افزودن آی‌پی تمیز">افزودن آی‌پی تمیز</div>
-    <div class="fg"><label class="fl" data-en="IPs / Domains (one per line)" data-fa="آی‌پی‌ها (هر خط یک)">آی‌پی‌ها (هر خط یک)</label><textarea class="fi" id="na" rows="5" placeholder="8.8.8.8&#10;example.com" style="resize:vertical;font-family:monospace"></textarea></div>
+    <div class="fg"><label class="fl" data-en="IPs / Domains (one per line)" data-fa="آی‌پی‌ها (هر خط یک)">آی‌پی‌ها (هر خط یک)</label><textarea class="fi" id="na" rows="5" placeholder="8.8.8.8&#10;example.com" style="resize:vertical;font-family:monospace" dir="ltr"></textarea></div>
     <button class="btn btn-gold" onclick="addAddrs()" style="width:100%;justify-content:center;margin-top:12px;padding:12px" data-en="ADD ALL" data-fa="افزودن همه">افزودن همه</button>
   </div>
 </div>
@@ -4499,11 +4549,19 @@ function pn(v){
   if(lang!=='fa')return String(v);
   return String(v).replace(/[0-9]/g,function(d){return '۰۱۲۳۴۵۶۷۸۹'[d]});
 }
-/* مثل pn ولی برای اعداد اعشاری (ممیز فارسی) */
+/* مثل pn ولی برای اعداد اعشاری: ممیز فارسی + جداکننده‌ی هزارگان (۱٬۲۳۴٫۵۶) */
 function pnd(v){
   if(lang!=='fa')return String(v);
-  return String(v).replace(/[0-9]/g,function(d){return '۰۱۲۳۴۵۶۷۸۹'[d]}).replace(/\./g,'٫');
+  const str=String(v);
+  const dot=str.indexOf('.');
+  const frac=dot<0?0:str.length-dot-1;
+  const n=Number(str);
+  if(isNaN(n))return str.replace(/[0-9]/g,function(d){return '۰۱۲۳۴۵۶۷۸۹'[d]});
+  try{return n.toLocaleString('fa-IR',{minimumFractionDigits:frac,maximumFractionDigits:frac});}
+  catch(e){return str.replace(/[0-9]/g,function(d){return '۰۱۲۳۴۵۶۷۸۹'[d]}).replace(/\./g,'٫');}
 }
+/* درصد با علامت فارسی (۸۲٫۴٪) */
+function pc(v){return lang==='fa'?pnd(v)+'٪':v+'%'}
 
 let lang=localStorage.getItem('ll')||'fa';
 let theme=localStorage.getItem('theme')||'dark';
@@ -4574,6 +4632,7 @@ function applyLangToCharts(){
   if(tChart){
     tChart.data.datasets[0].label=tr('chart_mb');
     tChart.options.scales.y.ticks.callback=v=>pn(v)+' '+tr('chart_mb');
+    tChart.options.scales.y.position=(lang==='fa'?'right':'left');
     tChart.update();
   }
   if(iChart){
@@ -4982,7 +5041,7 @@ async function fetchRailwayProjects(){
   $m('rw-volume-info').style.display='none';
   try{
     const r=await fetch('/api/railway/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});
-    if(!r.ok)throw new Error((await r.json()).detail||'Error');
+    if(!r.ok)throw new Error((await r.json()).detail||tr('check_fail'));
     const d=await r.json();
     sel.innerHTML='<option value="">'+tr('select_project')+'</option>'+d.projects.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
     sel.disabled=false;
@@ -5077,13 +5136,13 @@ async function loadStats(){
     if(sData.cpu_percent!==undefined){
       const c=sData.cpu_percent;
       const cc=c>80?'var(--red)':c>50?'var(--yellow)':'var(--gold)';
-      $m('cpu-v').textContent=pnd(c.toFixed(1))+'%';$m('cpu-v').style.color=cc;
+      $m('cpu-v').textContent=pc(c.toFixed(1));$m('cpu-v').style.color=cc;
       $m('cpu-b').style.width=c+'%';$m('cpu-b').style.background=cc;
     }
     if(sData.memory_percent!==undefined){
       const m=sData.memory_percent;
       const mc=m>80?'var(--red)':m>50?'var(--yellow)':'var(--green)';
-      $m('mem-v').textContent=pnd(m.toFixed(1))+'%';$m('mem-v').style.color=mc;
+      $m('mem-v').textContent=pc(m.toFixed(1));$m('mem-v').style.color=mc;
       $m('mem-b').style.width=m+'%';$m('mem-b').style.background=mc;
     }
     updChart();
@@ -5121,7 +5180,7 @@ function initChart(){
       plugins:{legend:{display:false}},
       scales:{
         x:{grid:{display:false},ticks:{color:'rgba(255,215,0,0.35)',font:{size:10}}},
-        y:{grid:{color:'rgba(255,215,0,0.06)'},ticks:{color:'rgba(255,215,0,0.35)',font:{size:10},callback:v=>pn(v)+' '+tr('chart_mb')},beginAtZero:true}
+        y:{position:(lang==='fa'?'right':'left'),grid:{color:'rgba(255,215,0,0.06)'},ticks:{color:'rgba(255,215,0,0.35)',font:{size:10},callback:v=>pn(v)+' '+tr('chart_mb')},beginAtZero:true}
       }
     }
   });
@@ -5204,7 +5263,7 @@ function renderNotifs(notifs){
   el.innerHTML=notifs.map(n=>{
     const icon=NOTIF_ICONS[n.type]||'ℹ️';
     const cls=n.seen?'':'unseen';
-    const time=new Date(n.created_at).toLocaleString(loc());
+    const time=new Date(n.created_at).toLocaleString(loc(),{dateStyle:'medium',timeStyle:'short'});
     const linkHtml=n.link?`<a href="${esc(n.link)}" target="_blank" class="notif-link">${tr('gh')} ↗</a>`:'';
     return `<div class="notif-item ${cls}" onclick="markSeen(${n.id})">
       <div class="notif-icon ${n.type}">${icon}</div>
@@ -5271,8 +5330,8 @@ async function delAddr(i){
   try{
     const r=await fetch('/api/addresses/'+i,{method:'DELETE'});
     if(!r.ok)throw new Error();
-    toast('Deleted');await loadAddrs();
-  }catch(e){toast('Error deleting',true)}
+    toast(tr('deleted'));await loadAddrs();
+  }catch(e){toast(tr('delete_err'),true)}
 }
 
 async function delAllAddrs(){
@@ -5282,7 +5341,7 @@ async function delAllAddrs(){
     const r=await fetch('/api/addresses',{method:'DELETE'});
     if(!r.ok)throw new Error();
     toast(tr('addrs_deleted'));await loadAddrs();
-  }catch(e){toast('Error deleting',true)}
+  }catch(e){toast(tr('delete_err'),true)}
 }
 
 // همه‌ی آی‌پی‌های railway_ips.txt رو یکجا (یک درخواست، بدون تاخیر
@@ -5324,7 +5383,7 @@ async function checkPanelVersion(isPeriodic){
       loadedPanelVersion=serverVersion;
       const lastSeen=localStorage.getItem(PANEL_VERSION_KEY);
       if(lastSeen&&lastSeen!==serverVersion){
-        toast(tr('panel_updated',{v:pn(serverVersion)}));
+        toast(tr('panel_updated',{v:pnd(serverVersion)}));
       }
       localStorage.setItem(PANEL_VERSION_KEY,serverVersion);
     }
@@ -5333,7 +5392,7 @@ async function checkPanelVersion(isPeriodic){
     if(d.update_available&&d.latest_github_version){
       const alreadyNotified=localStorage.getItem(PANEL_GH_NOTIFIED_KEY);
       if(alreadyNotified!==d.latest_github_version){
-        toast(tr('new_version',{v:pn(d.latest_github_version)}));
+        toast(tr('new_version',{v:pnd(d.latest_github_version)}));
         localStorage.setItem(PANEL_GH_NOTIFIED_KEY,d.latest_github_version);
       }
     }
